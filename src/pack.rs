@@ -18,7 +18,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, DateTime, ZipWriter};
 
-use crate::compile::{self, BuildRequest};
+use crate::compile::{self, BuildRequest, comment_start};
 use crate::diagnostics::{self, Reporter};
 use crate::filelock;
 use crate::manifest::Engine;
@@ -65,7 +65,7 @@ pub fn pack(project: &Project, resolution: &Resolution, req: &PackRequest) -> Re
     }
 
     // 1. Build, so the recorder knows every file TeX read.
-    compile::build(
+    let built = compile::build(
         project,
         resolution,
         &BuildRequest { profile: profile.name.clone(), verbose: req.verbose, reporter: req.reporter },
@@ -76,9 +76,12 @@ pub fn pack(project: &Project, resolution: &Resolution, req: &PackRequest) -> Re
     let main_name = main.file_name().unwrap().to_string_lossy().to_string();
     let main_stem = Path::new(&main_name).file_stem().unwrap().to_string_lossy().to_string();
     let out_dir = project.target_dir().join(&profile.name);
-    let fls_path = out_dir.join(format!("{}.fls", doc.name));
-    let fls = fs::read_to_string(&fls_path)
-        .with_context(|| format!("failed to read the recorder file `{}`", project.display(&fls_path)))?;
+    let mut recorded = Vec::new();
+    for fls_path in &built.recorder_files {
+        let fls = fs::read_to_string(fls_path)
+            .with_context(|| format!("failed to read the recorder file `{}`", project.display(fls_path)))?;
+        recorded.extend(parse_fls(&fls));
+    }
 
     // 2. Decide which recorded files go into the bundle.
     let root = normalize(&project.root)?;
@@ -88,7 +91,7 @@ pub fn pack(project: &Project, resolution: &Resolution, req: &PackRequest) -> Re
     let mut files: BTreeMap<String, PathBuf> = BTreeMap::new();
     // Recorded files outside the project and its dependencies; checked below.
     let mut elsewhere = Vec::new();
-    for input in parse_fls(&fls) {
+    for input in recorded {
         let Ok(path) = normalize(&input) else { continue };
         if path == main || path.starts_with(&target_dir) || path.is_dir() {
             continue;
@@ -347,20 +350,6 @@ fn walk(dir: &Path) -> Result<Vec<PathBuf>> {
     }
     out.sort();
     Ok(out)
-}
-
-/// Index where code ends and a `%` comment starts (or the line length).
-fn comment_start(line: &str) -> usize {
-    let bytes = line.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\\' => i += 2,
-            b'%' => return i,
-            _ => i += 1,
-        }
-    }
-    line.len()
 }
 
 /// Inline `\input{...}` and `\include{...}` of files under the main file's

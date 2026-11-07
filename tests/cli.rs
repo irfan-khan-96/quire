@@ -23,7 +23,14 @@ fn ok(out: &Output) -> String {
 }
 
 fn has(tool: &str) -> bool {
-    Command::new(tool).arg("--version").output().is_ok()
+    let found = Command::new(tool).arg("--version").output().is_ok();
+    if !found && tool == "latexmk" {
+        assert!(
+            std::env::var("QUIRE_REQUIRE_TEX").unwrap_or_default().is_empty(),
+            "QUIRE_REQUIRE_TEX is set but latexmk is missing"
+        );
+    }
+    found
 }
 
 fn git(dir: &Path, args: &[&str]) {
@@ -231,7 +238,30 @@ Hi
     .unwrap();
     let built = quire(&doc, tmp.path(), &["build", "--message-format", "json"]);
     let messages = parse(&built);
-    let artifact = messages.iter().find(|m| m["reason"] == "document-artifact").expect("an artifact");
+    let artifact = messages.iter().find(|m| m["reason"] == "document-artifact").unwrap_or_else(|| {
+        let log = fs::read(doc.join("target/dev/paper.log")).unwrap_or_default();
+        let verbose = quire(&doc, tmp.path(), &["build", "-v", "--message-format", "json"]);
+        let verbose_err = String::from_utf8_lossy(&verbose.stderr).to_string();
+        let tail: Vec<&str> = verbose_err.lines().rev().take(80).collect::<Vec<_>>().into_iter().rev().collect();
+        let main_now = fs::read_to_string(doc.join("src/main.tex")).unwrap_or_default();
+        panic!(
+            "no artifact message\nmain.tex now:\n{main_now}\nverbose rerun (exit {:?}):\n{}\nstdout:\n{}\nstderr:\n{}\nlog head: {}\nlog tail:\n{}",
+            verbose.status.code(),
+            tail.join("\n"),
+            String::from_utf8_lossy(&built.stdout),
+            String::from_utf8_lossy(&built.stderr),
+            String::from_utf8_lossy(&log).lines().next().unwrap_or_default(),
+            String::from_utf8_lossy(&log)
+                .lines()
+                .rev()
+                .take(40)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    });
     assert!(artifact["pdf"].as_str().unwrap().ends_with("target/dev/paper.pdf"));
     assert_eq!(messages.last().unwrap()["reason"], "build-finished");
     assert_eq!(messages.last().unwrap()["success"], true);
