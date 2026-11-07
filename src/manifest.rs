@@ -122,9 +122,16 @@ pub struct DetailedDependency {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DepSpec {
     /// Provided by the TeX distribution (TeX Live / MiKTeX).
-    TexLive { version: String },
-    Path { path: PathBuf },
-    Git { url: String, reference: GitRef },
+    TexLive {
+        version: String,
+    },
+    Path {
+        path: PathBuf,
+    },
+    Git {
+        url: String,
+        reference: GitRef,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -245,8 +252,7 @@ pub const BUILTIN_PROFILES: [&str; 2] = ["dev", "release"];
 
 impl Manifest {
     pub fn load(path: &Path) -> Result<Manifest> {
-        let text = fs::read_to_string(path)
-            .with_context(|| format!("failed to read `{}`", path.display()))?;
+        let text = fs::read_to_string(path).with_context(|| format!("failed to read `{}`", path.display()))?;
         Manifest::parse(&text).with_context(|| format!("failed to parse `{}`", path.display()))
     }
 
@@ -318,8 +324,7 @@ impl Manifest {
                 if parent == name {
                     bail!("profile `{name}` inherits from itself");
                 }
-                self.profile_inner(parent, depth + 1)
-                    .with_context(|| format!("in profile `{name}`"))?
+                self.profile_inner(parent, depth + 1).with_context(|| format!("in profile `{name}`"))?
             }
         };
         profile.name = name.to_string();
@@ -385,10 +390,7 @@ mod tests {
             m.dependencies["uni"].to_spec("uni").unwrap(),
             DepSpec::Git { url: "https://example.com/uni.git".into(), reference: GitRef::Tag("v1.2".into()) }
         );
-        assert_eq!(
-            m.dependencies["lab"].to_spec("lab").unwrap(),
-            DepSpec::Path { path: PathBuf::from("../lab") }
-        );
+        assert_eq!(m.dependencies["lab"].to_spec("lab").unwrap(), DepSpec::Path { path: PathBuf::from("../lab") });
         assert_eq!(m.dependencies["siunitx"].to_spec("siunitx").unwrap(), DepSpec::TexLive { version: "*".into() });
     }
 
@@ -435,10 +437,9 @@ mod tests {
 
     #[test]
     fn detects_inherit_cycles() {
-        let m = Manifest::parse(
-            "[document]\nname = \"x\"\n[profile.a]\ninherits = \"b\"\n[profile.b]\ninherits = \"a\"\n",
-        )
-        .unwrap();
+        let m =
+            Manifest::parse("[document]\nname = \"x\"\n[profile.a]\ninherits = \"b\"\n[profile.b]\ninherits = \"a\"\n")
+                .unwrap();
         assert!(format!("{:#}", m.profile("a").unwrap_err()).contains("cycle"));
     }
 }

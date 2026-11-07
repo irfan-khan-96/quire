@@ -37,12 +37,15 @@ impl Lockfile {
         if !path.exists() {
             return Ok(Lockfile::default());
         }
-        let text = fs::read_to_string(path)
-            .with_context(|| format!("failed to read `{}`", path.display()))?;
+        let text = fs::read_to_string(path).with_context(|| format!("failed to read `{}`", path.display()))?;
         let lock: Lockfile = toml::from_str(&text)
             .with_context(|| format!("failed to parse `{}`; delete it to regenerate", path.display()))?;
         if lock.version != LOCK_VERSION {
-            bail!("`{}` has version {}, but this quire understands version {LOCK_VERSION}", path.display(), lock.version);
+            bail!(
+                "`{}` has version {}, but this quire understands version {LOCK_VERSION}",
+                path.display(),
+                lock.version
+            );
         }
         Ok(lock)
     }
@@ -55,17 +58,6 @@ impl Lockfile {
         let mut sorted = self.clone();
         sorted.packages.sort();
         format!("{HEADER}{}", toml::to_string(&sorted).expect("lockfile serializes"))
-    }
-
-    /// Write the lockfile unless the contents on disk are already identical.
-    /// Returns whether the file was written.
-    pub fn save(&self, path: &Path) -> Result<bool> {
-        let new = self.render();
-        if fs::read_to_string(path).ok().as_deref() == Some(new.as_str()) {
-            return Ok(false);
-        }
-        fs::write(path, new).with_context(|| format!("failed to write `{}`", path.display()))?;
-        Ok(true)
     }
 }
 

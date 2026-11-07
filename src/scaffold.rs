@@ -43,7 +43,10 @@ pub struct NewArgs {
 
 pub fn new_project(path: &Path, args: &NewArgs) -> Result<()> {
     if path.exists() && fs::read_dir(path)?.next().is_some() {
-        bail!("destination `{}` already exists and is not empty\nhelp: use `quire init` inside it instead", path.display());
+        bail!(
+            "destination `{}` already exists and is not empty\nhelp: use `quire init` inside it instead",
+            path.display()
+        );
     }
     let name = project_name(path, args)?;
     fs::create_dir_all(path).with_context(|| format!("failed to create `{}`", path.display()))?;
@@ -153,9 +156,15 @@ fn preamble(engine: Engine) -> &'static str {
     }
 }
 
-const PROFILE_LINE: &str = "% Defined by quire; the fallback keeps the file compilable without it.\n\\providecommand\\QuireProfile{none}\n";
+const PROFILE_LINE: &str =
+    "% Defined by quire; the fallback keeps the file compilable without it.\n\\providecommand\\QuireProfile{none}\n";
 
-fn template_files(name: &str, template: Template, engine: Engine, existing_main: Option<&Path>) -> Vec<(PathBuf, String)> {
+fn template_files(
+    name: &str,
+    template: Template,
+    engine: Engine,
+    existing_main: Option<&Path>,
+) -> Vec<(PathBuf, String)> {
     let mut files = vec![(PathBuf::from(".gitignore"), "/target/\n".to_string())];
     let title = tex_escape(name);
     let pre = preamble(engine);

@@ -52,7 +52,9 @@ pub fn doctor() -> bool {
         println!("\n  quire home: {}", home.display());
     }
     if !healthy {
-        println!("\n  Install TeX Live (https://tug.org/texlive/) or MiKTeX (https://miktex.org/), which include latexmk.");
+        println!(
+            "\n  Install TeX Live (https://tug.org/texlive/) or MiKTeX (https://miktex.org/), which include latexmk."
+        );
     }
     healthy
 }

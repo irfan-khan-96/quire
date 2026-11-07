@@ -67,9 +67,7 @@ pub fn quire_home() -> Result<PathBuf> {
 
 /// Canonicalize without Windows' `\\?\` prefix, which TeX does not understand.
 pub fn normalize(path: &Path) -> Result<PathBuf> {
-    let canonical = path
-        .canonicalize()
-        .with_context(|| format!("`{}` does not exist", path.display()))?;
+    let canonical = path.canonicalize().with_context(|| format!("`{}` does not exist", path.display()))?;
     let text = canonical.to_string_lossy();
     match text.strip_prefix(r"\\?\") {
         Some(rest) if !rest.starts_with("UNC") => Ok(PathBuf::from(rest)),

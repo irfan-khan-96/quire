@@ -45,6 +45,37 @@ cargo install --path .
 | `quire clean` | Delete `target/` (or one `--profile`). |
 | `quire doctor` | Check that the external tools are installed. |
 
+### Global flags
+
+| Flag | Effect |
+|---|---|
+| `--locked` | Fail instead of changing `quire.lock`. Use it in CI so builds use exactly the committed revisions. |
+| `--offline` | Never touch the network; use only `~/.quire`. Fails if something isn't cached. |
+| `--frozen` | Both `--locked` and `--offline`. |
+
+### Machine-readable output
+
+`quire build --message-format json` (and `quire watch`) print one JSON object per
+line on stdout, like `cargo --message-format=json`. Status lines stay on stderr.
+
+```json
+{"reason":"compiler-message","document":"thesis","profile":"dev","message":{"level":"error","message":"Undefined control sequence.","file":"C:/thesis/src/ch1.tex","line":42,"context":["l.42 \\foo"],"rendered":"..."}}
+{"reason":"document-artifact","document":"thesis","profile":"dev","pdf":"C:/thesis/target/dev/thesis.pdf","log":"C:/thesis/target/dev/thesis.log"}
+{"reason":"build-finished","success":true}
+```
+
+Warnings are reported the same way with `"level":"warning"`. Editors and CI can
+use these to put diagnostics on the right file and line.
+
+### Concurrency
+
+quire takes file locks, as Cargo does. One covers the shared git cache in
+`~/.quire`, and one covers each `target/<profile>` directory. Builds and
+dependency fetches running in parallel wait for each other (`Blocking waiting
+for file lock ...`) and never corrupt each other's files. Git clones are written
+to a temporary directory and renamed into place, so an interrupted clone never
+leaves a broken cache.
+
 ## quire.toml
 
 ```toml
@@ -140,4 +171,6 @@ cargo test
 ```
 
 The integration tests in `tests/cli.rs` skip the git and latexmk cases when those
-tools are not installed.
+tools are not installed. CI (`.github/workflows/ci.yml`) runs `cargo fmt --check`
+and `clippy -D warnings`. It runs the tests on Linux (with TeX Live, so every
+test runs) and on macOS and Windows (where the LaTeX build tests skip).
