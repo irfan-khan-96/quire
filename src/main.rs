@@ -9,6 +9,7 @@ mod git;
 mod lock;
 mod manifest;
 mod pack;
+mod preamble;
 mod project;
 mod resolve;
 mod scaffold;
@@ -161,9 +162,9 @@ fn run(cli: Cli) -> Result<bool> {
                 compile::build(&project, &resolution, &req)
             });
             req.reporter.finished(result.is_ok());
-            let pdf = result?;
+            let output = result?;
             if open {
-                open_file(&pdf)?;
+                open_file(&output.pdf)?;
             }
         }
         Command::Watch { build } => {

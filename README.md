@@ -93,6 +93,7 @@ uni-thesis = { git = "https://github.com/org/uni-thesis", tag = "v1.0" }
 
 [build]
 shell-escape = false       # needed by e.g. minted; off by default
+preamble-cache = true      # cache the compiled preamble (pdflatex); on by default
 latexmk-args = []          # extra latexmk arguments for every profile
 
 [profile.draft]            # quire build --profile draft
@@ -141,6 +142,53 @@ tex-dir = "tex"      # directory exposed to dependents
 name = "my-style-doc"
 main = "doc/my-style-doc.tex"
 ```
+
+## Fast rebuilds: the preamble cache
+
+Most of a LaTeX rebuild goes into loading the preamble again: TikZ, fonts,
+hyperref, siunitx. With pdflatex, quire compiles the preamble once into a format
+file (`target/<profile>/preamble/`) and starts later builds from it, so editing
+the body only pays for the body.
+
+Median edit-and-rebuild time (change one word, rebuild):
+
+| Document | latexmk | quire, no cache | quire, cached | Speed-up |
+|---|---:|---:|---:|---:|
+| [paper](bench/docs/paper.tex): microtype, AMS, siunitx, TikZ, hyperref, cleveref | 5.82s | 5.92s | **3.30s** | 1.8× |
+| [heavy](bench/docs/heavy.tex): paper plus pgfplots and TikZ libraries | 6.41s | 6.21s | **3.07s** | 2.1× |
+| [beamer](bench/docs/beamer.tex): beamer, Madrid theme, TikZ | 7.04s | 5.39s | **2.90s** | 2.4× |
+| [light](bench/docs/light.tex): article and amsmath | 2.36s | 2.39s | 2.20s | 1.1× |
+
+These were measured with MiKTeX 26.5 (pdfTeX 1.40.29) on Windows 11 and include
+latexmk's own startup. Run `python bench/bench.py` to measure on your machine.
+
+How it works and stays correct:
+
+- **The cache is rebuilt when anything it depends on changes:** the preamble text,
+  the profile's settings, the dependency search path, or any file the preamble
+  read (packages, path/git dependencies, the TeX distribution itself, compared by
+  size and modification time).
+- **Your main file is still the file TeX compiles**, so error line numbers and
+  SyncTeX are unaffected.
+- **Preambles that can't be cached fall back automatically.** If the format can't
+  be built, or the document fails with it but builds without it, quire builds
+  normally and remembers not to try again until the preamble changes. Errors in
+  the body are reported straight away, without a second compile.
+- **To keep one package out of the cache**, put it after `\endofdump`. Everything
+  before that line is still cached:
+
+  ```latex
+  \usepackage{tikz,siunitx}   % cached
+  \endofdump
+  \usepackage{somepackage}    % loaded on every build
+  \begin{document}
+  ```
+
+The cache needs the `mylatexformat` package, which comes with TeX Live and
+MiKTeX (`quire doctor` checks for it). It is used with pdflatex only, because
+XeTeX and LuaTeX can't reliably store their fonts in a format. Turn it off with
+`preamble-cache = false` in `[build]` or in a profile, or for one run with
+`QUIRE_PREAMBLE_CACHE=0`.
 
 ## Submitting to arXiv
 

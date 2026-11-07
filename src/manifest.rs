@@ -222,6 +222,8 @@ impl RawDependency {
 pub struct BuildConfig {
     #[serde(default)]
     pub shell_escape: bool,
+    /// Cache the compiled preamble (pdflatex only). Default: true.
+    pub preamble_cache: Option<bool>,
     /// Extra arguments passed to latexmk for every profile.
     #[serde(default)]
     pub latexmk_args: Vec<String>,
@@ -235,6 +237,7 @@ pub struct ProfileConfig {
     pub pretex: Option<String>,
     pub synctex: Option<bool>,
     pub shell_escape: Option<bool>,
+    pub preamble_cache: Option<bool>,
     pub latexmk_args: Option<Vec<String>>,
 }
 
@@ -266,6 +269,7 @@ pub struct Profile {
     pub pretex: Option<String>,
     pub synctex: bool,
     pub shell_escape: bool,
+    pub preamble_cache: bool,
     pub latexmk_args: Vec<String>,
 }
 
@@ -337,6 +341,7 @@ impl Manifest {
                     pretex: None,
                     synctex: name == "dev",
                     shell_escape: self.build.shell_escape,
+                    preamble_cache: self.build.preamble_cache.unwrap_or(true),
                     latexmk_args: Vec::new(),
                 }
             }
@@ -366,6 +371,9 @@ impl Manifest {
             }
             if let Some(v) = user.shell_escape {
                 profile.shell_escape = v;
+            }
+            if let Some(v) = user.preamble_cache {
+                profile.preamble_cache = v;
             }
             if let Some(v) = &user.latexmk_args {
                 profile.latexmk_args = v.clone();

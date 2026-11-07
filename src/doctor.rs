@@ -37,16 +37,30 @@ pub fn doctor() -> bool {
             Ok(out) => {
                 let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
                 let version = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("").to_string();
-                anstream::println!("  {OK}ok{OK:#}       {:<10} {version}", tool.program);
+                anstream::println!("  {OK}ok{OK:#}       {:<13} {version}", tool.program);
             }
             Err(_) if tool.required => {
                 healthy = false;
-                anstream::println!("  {MISSING}missing{MISSING:#}  {:<10} {}", tool.program, tool.purpose);
+                anstream::println!("  {MISSING}missing{MISSING:#}  {:<13} {}", tool.program, tool.purpose);
             }
             Err(_) => {
-                anstream::println!("  {OPTIONAL}missing{OPTIONAL:#}  {:<10} optional: {}", tool.program, tool.purpose);
+                anstream::println!("  {OPTIONAL}missing{OPTIONAL:#}  {:<13} optional: {}", tool.program, tool.purpose);
             }
         }
+    }
+    let mylatexformat = Command::new("kpsewhich")
+        .arg("mylatexformat.ltx")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|p| !p.is_empty());
+    match mylatexformat {
+        Some(path) => anstream::println!("  {OK}ok{OK:#}       {:<13} {path}", "mylatexformat"),
+        None => anstream::println!(
+            "  {OPTIONAL}missing{OPTIONAL:#}  {:<13} optional: preamble caching (faster pdflatex rebuilds)",
+            "mylatexformat"
+        ),
     }
     if let Ok(home) = quire_home() {
         println!("\n  quire home: {}", home.display());
