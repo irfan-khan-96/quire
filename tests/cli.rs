@@ -231,7 +231,23 @@ Hi
     .unwrap();
     let built = quire(&doc, tmp.path(), &["build", "--message-format", "json"]);
     let messages = parse(&built);
-    let artifact = messages.iter().find(|m| m["reason"] == "document-artifact").expect("an artifact");
+    let artifact = messages.iter().find(|m| m["reason"] == "document-artifact").unwrap_or_else(|| {
+        let log = fs::read(doc.join("target/dev/paper.log")).unwrap_or_default();
+        panic!(
+            "no artifact message\nstdout:\n{}\nstderr:\n{}\nlog tail:\n{}",
+            String::from_utf8_lossy(&built.stdout),
+            String::from_utf8_lossy(&built.stderr),
+            String::from_utf8_lossy(&log)
+                .lines()
+                .rev()
+                .take(40)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    });
     assert!(artifact["pdf"].as_str().unwrap().ends_with("target/dev/paper.pdf"));
     assert_eq!(messages.last().unwrap()["reason"], "build-finished");
     assert_eq!(messages.last().unwrap()["success"], true);
