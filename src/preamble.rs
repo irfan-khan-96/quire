@@ -30,11 +30,14 @@ use crate::shell;
 const KEY_FILE: &str = "quire-format.key";
 const FAILED_FILE: &str = "quire-format.failed";
 const DUMP_FILE: &str = "quire-preamble.tex";
+const FLAVOR_FILE: &str = "quire-distribution";
 
 /// A usable cached format.
 pub struct Format {
-    /// Value for pdflatex's `-fmt=`, relative to the main file's directory.
+    /// Value for pdflatex's `-fmt=`.
     pub fmt_arg: String,
+    /// Extra environment pdflatex needs to find the format.
+    pub env: Vec<(&'static str, OsString)>,
     /// True if the format was (re)built during this build.
     pub rebuilt: bool,
     /// Recorder file of the dump: the files the preamble read.
@@ -63,7 +66,7 @@ pub fn prepare(inputs: &Inputs) -> Option<Format> {
         return None;
     }
     let split = split_point(inputs.source)?;
-    let fmt_arg = fmt_arg(inputs)?;
+    let relative_fmt = fmt_arg(inputs)?;
     let dump_text = format!("{}{}\n\\begin{{document}}\n", inputs.prelude, &inputs.source[..split]);
     let dir = inputs.out_dir.join("preamble");
     let recorder = dir.join(format!("{}.fls", inputs.name));
@@ -74,7 +77,8 @@ pub fn prepare(inputs: &Inputs) -> Option<Format> {
         return None;
     }
     if fmt.is_file() && read(&dir.join(KEY_FILE)).as_deref() == Some(key.as_str()) {
-        return Some(Format { fmt_arg, rebuilt: false, recorder, dir, key });
+        let (fmt_arg, env) = locate(inputs.name, &relative_fmt, &dir);
+        return Some(Format { fmt_arg, env, rebuilt: false, recorder, dir, key });
     }
     if !has_mylatexformat() {
         return None;
@@ -103,7 +107,9 @@ pub fn prepare(inputs: &Inputs) -> Option<Format> {
     if ok {
         let _ = fs::write(dir.join(KEY_FILE), &key);
         let _ = fs::remove_file(dir.join(FAILED_FILE));
-        Some(Format { fmt_arg, rebuilt: true, recorder, dir, key })
+        let _ = fs::remove_file(dir.join(FLAVOR_FILE));
+        let (fmt_arg, env) = locate(inputs.name, &relative_fmt, &dir);
+        Some(Format { fmt_arg, env, rebuilt: true, recorder, dir, key })
     } else {
         let _ = fs::write(dir.join(FAILED_FILE), &key);
         let log = dir.join(format!("{}.log", inputs.name));
@@ -136,6 +142,38 @@ pub fn split_point(source: &str) -> Option<usize> {
         offset += line.len();
     }
     None
+}
+
+/// How to point pdflatex at the format: the `-fmt=` value plus any environment.
+///
+/// TeX Live names its temporary recorder file after the `-fmt` value, inside
+/// the output directory, so a value containing a path makes it fail. There,
+/// the bare name is used and `TEXFORMATS` points at the cache directory.
+/// MiKTeX ignores `TEXFORMATS` but accepts a relative path. Which one is
+/// installed is detected once per format and remembered next to it.
+fn locate(name: &str, relative_fmt: &str, dir: &Path) -> (String, Vec<(&'static str, OsString)>) {
+    let flavor_file = dir.join(FLAVOR_FILE);
+    let miktex = match read(&flavor_file) {
+        Some(flavor) => flavor == "miktex",
+        None => {
+            let miktex = Command::new("pdflatex")
+                .arg("--version")
+                .output()
+                .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("MiKTeX"));
+            let _ = fs::write(&flavor_file, if miktex { "miktex" } else { "texlive" });
+            miktex
+        }
+    };
+    if miktex {
+        return (relative_fmt.to_string(), Vec::new());
+    }
+    let sep = if cfg!(windows) { ";" } else { ":" };
+    let value = match std::env::var("TEXFORMATS") {
+        Ok(existing) if !existing.is_empty() => format!("{}{sep}{existing}", tex_path(dir)),
+        // A trailing separator appends the default search path.
+        _ => format!("{}{sep}", tex_path(dir)),
+    };
+    (name.to_string(), vec![("TEXFORMATS", OsString::from(value))])
 }
 
 /// `-fmt=` value relative to the main file's directory. kpathsea only treats a

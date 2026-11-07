@@ -5,7 +5,7 @@ use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use anyhow::{Context, Result, anyhow, bail};
 
@@ -104,6 +104,9 @@ pub fn build(project: &Project, resolution: &Resolution, req: &BuildRequest) -> 
         for (var, value) in &search_env {
             cmd.env(var, value);
         }
+        for (var, value) in format.map(|f| f.env.as_slice()).unwrap_or_default() {
+            cmd.env(var, value);
+        }
         cmd
     };
     let attempt = |format: Option<&preamble::Format>, force: bool| -> Result<Output> {
@@ -117,10 +120,11 @@ pub fn build(project: &Project, resolution: &Resolution, req: &BuildRequest) -> 
         Ok(output)
     };
 
+    let attempt_started = SystemTime::now();
     let mut output = attempt(format.as_ref(), force)?;
     let log_path = out_dir.join(format!("{}.log", doc.name));
     if !output.status.success()
-        && !error_is_in_body(&log_path, main_dir, &main, &source)
+        && !error_is_in_body(&log_path, attempt_started, main_dir, &main, &source)
         && let Some(f) = format.take()
     {
         // Some preambles cannot run from a format. If the document builds the
@@ -211,7 +215,14 @@ fn run(cmd: &mut Command, req: &BuildRequest) -> Result<Output> {
 /// the cached preamble in the main file, or in another file. Such an error
 /// cannot be caused by the preamble cache, so there is no point retrying
 /// without it.
-fn error_is_in_body(log_path: &Path, main_dir: &Path, main: &Path, source: &str) -> bool {
+///
+/// Only a log written by this attempt counts: if TeX never started, the log
+/// on disk is from an earlier build and says nothing about this one.
+fn error_is_in_body(log_path: &Path, since: SystemTime, main_dir: &Path, main: &Path, source: &str) -> bool {
+    let fresh = fs::metadata(log_path).and_then(|m| m.modified()).is_ok_and(|t| t >= since);
+    if !fresh {
+        return false;
+    }
     let Ok(log) = fs::read(log_path) else { return false };
     let Some(mut error) = diagnostics::parse_errors(&String::from_utf8_lossy(&log)).into_iter().next() else {
         return false;

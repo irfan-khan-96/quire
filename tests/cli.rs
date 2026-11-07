@@ -23,7 +23,14 @@ fn ok(out: &Output) -> String {
 }
 
 fn has(tool: &str) -> bool {
-    Command::new(tool).arg("--version").output().is_ok()
+    let found = Command::new(tool).arg("--version").output().is_ok();
+    if !found && tool == "latexmk" {
+        assert!(
+            std::env::var("QUIRE_REQUIRE_TEX").unwrap_or_default().is_empty(),
+            "QUIRE_REQUIRE_TEX is set but latexmk is missing"
+        );
+    }
+    found
 }
 
 fn git(dir: &Path, args: &[&str]) {

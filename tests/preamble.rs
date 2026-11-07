@@ -31,6 +31,10 @@ fn available() -> bool {
         .output()
         .is_ok_and(|o| o.status.success() && !o.stdout.trim_ascii().is_empty());
     if !(latexmk && mylatexformat) {
+        assert!(
+            std::env::var("QUIRE_REQUIRE_TEX").unwrap_or_default().is_empty(),
+            "QUIRE_REQUIRE_TEX is set but latexmk or mylatexformat is missing"
+        );
         eprintln!("skipping: latexmk or mylatexformat not installed");
     }
     latexmk && mylatexformat
