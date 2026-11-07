@@ -236,3 +236,124 @@ Hi
     assert_eq!(messages.last().unwrap()["reason"], "build-finished");
     assert_eq!(messages.last().unwrap()["success"], true);
 }
+
+/// Names and contents of the files in a zip.
+fn zip_entries(path: &Path) -> std::collections::BTreeMap<String, String> {
+    let mut archive = zip::ZipArchive::new(fs::File::open(path).unwrap()).unwrap();
+    (0..archive.len())
+        .map(|i| {
+            let mut file = archive.by_index(i).unwrap();
+            let mut text = String::new();
+            std::io::Read::read_to_string(&mut file, &mut text).unwrap();
+            (file.name().unwrap().to_string(), text)
+        })
+        .collect()
+}
+
+/// A paper with a chapter, a bibliography, comments and a path dependency.
+fn arxiv_project(tmp: &Path) -> std::path::PathBuf {
+    ok(&quire(tmp, tmp, &["new", "macros", "--template", "package", "--vcs", "none"]));
+    ok(&quire(tmp, tmp, &["new", "paper", "--vcs", "none"]));
+    let doc = tmp.join("paper");
+    fs::create_dir_all(doc.join("src/chapters")).unwrap();
+    fs::write(
+        doc.join("src/main.tex"),
+        r"\documentclass{article}
+\usepackage{macros}
+\begin{document}
+\macroshello
+\input{chapters/intro}
+\bibliographystyle{plain}
+\bibliography{refs}
+\end{document}
+",
+    )
+    .unwrap();
+    fs::write(
+        doc.join("src/chapters/intro.tex"),
+        r"% SECRET reviewer notes
+Intro text, 100\% done. % TODO SECRET
+See \cite{knuth}.
+",
+    )
+    .unwrap();
+    fs::write(doc.join("src/refs.bib"), "@book{knuth, author={D. Knuth}, title={The TeXbook}, year={1984}}\n").unwrap();
+    ok(&quire(&doc, tmp, &["add", "macros", "--path", "../macros"]));
+    doc
+}
+
+#[test]
+fn pack_produces_a_self_contained_reproducible_bundle() {
+    if !has("latexmk") {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let doc = arxiv_project(tmp.path());
+    ok(&quire(&doc, tmp.path(), &["pack"]));
+    let zip_path = doc.join("target/arxiv/paper-arxiv.zip");
+    let first = fs::read(&zip_path).unwrap();
+
+    let entries = zip_entries(&zip_path);
+    let names: Vec<&str> = entries.keys().map(String::as_str).collect();
+    assert_eq!(names, vec!["chapters/intro.tex", "macros.sty", "main.bbl", "main.tex"]);
+    assert!(entries["main.tex"].starts_with("\\pdfoutput=1\n"));
+    assert!(entries["main.tex"].contains(r"\def\QuireProfile{release}"));
+    assert!(!entries["chapters/intro.tex"].contains("SECRET"));
+    assert!(entries["chapters/intro.tex"].contains(r"100\% done. %"));
+    assert!(entries["main.bbl"].contains("TeXbook"));
+
+    ok(&quire(&doc, tmp.path(), &["pack"]));
+    assert_eq!(fs::read(&zip_path).unwrap(), first, "packing twice gave different bytes");
+}
+
+#[test]
+fn pack_can_flatten_inputs() {
+    if !has("latexmk") {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let doc = arxiv_project(tmp.path());
+    let manifest = fs::read_to_string(doc.join("quire.toml")).unwrap();
+    fs::write(doc.join("quire.toml"), format!("{manifest}\n[target.arxiv]\nflatten = true\n")).unwrap();
+    ok(&quire(&doc, tmp.path(), &["pack"]));
+    let entries = zip_entries(&doc.join("target/arxiv/paper-arxiv.zip"));
+    assert!(!entries.contains_key("chapters/intro.tex"));
+    assert!(entries["main.tex"].contains("Intro text"));
+    assert!(!entries["main.tex"].contains(r"\input{chapters/intro}"));
+}
+
+#[test]
+fn pack_rejects_files_arxiv_would_not_have() {
+    if !has("latexmk") {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let doc = arxiv_project(tmp.path());
+    // A file outside both the project and its dependencies: the local build
+    // finds it, arXiv would not.
+    let outside = tmp.path().join("outside.tex");
+    fs::write(&outside, "Outside text.\n").unwrap();
+    let main = fs::read_to_string(doc.join("src/main.tex")).unwrap();
+    let outside_path = outside.to_string_lossy().replace('\\', "/");
+    fs::write(
+        doc.join("src/main.tex"),
+        main.replace(r"\macroshello", &format!(r"\macroshello\input{{{outside_path}}}")),
+    )
+    .unwrap();
+    ok(&quire(&doc, tmp.path(), &["build"]));
+    let out = quire(&doc, tmp.path(), &["pack"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("outside.tex"), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn pack_refuses_shell_escape() {
+    let tmp = TempDir::new().unwrap();
+    ok(&quire(tmp.path(), tmp.path(), &["new", "paper", "--vcs", "none"]));
+    let doc = tmp.path().join("paper");
+    let manifest = fs::read_to_string(doc.join("quire.toml")).unwrap();
+    fs::write(doc.join("quire.toml"), format!("{manifest}\n[build]\nshell-escape = true\n")).unwrap();
+    let out = quire(&doc, tmp.path(), &["pack"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("shell-escape"));
+}

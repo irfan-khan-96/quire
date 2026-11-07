@@ -8,6 +8,7 @@ mod filelock;
 mod git;
 mod lock;
 mod manifest;
+mod pack;
 mod project;
 mod resolve;
 mod scaffold;
@@ -75,6 +76,21 @@ enum Command {
     Watch {
         #[command(flatten)]
         build: BuildArgs,
+    },
+    /// Bundle the sources for submission, checked to compile on their own
+    Pack {
+        /// Where the bundle is going
+        #[arg(long, default_value = "arxiv")]
+        target: String,
+        /// Build profile to pack (default: the target's `profile`, else release)
+        #[arg(long)]
+        profile: Option<String>,
+        /// Skip compiling the bundle in isolation
+        #[arg(long)]
+        no_verify: bool,
+        /// Show full latexmk output and every packed file
+        #[arg(long, short = 'v')]
+        verbose: bool,
     },
     /// Remove build output
     Clean {
@@ -153,6 +169,18 @@ fn run(cli: Cli) -> Result<bool> {
         Command::Watch { build } => {
             let project = Project::discover()?;
             watch::watch(&project.root, &build.request(), policy)?;
+        }
+        Command::Pack { target, profile, no_verify, verbose } => {
+            let project = Project::discover()?;
+            let resolution = resolve::resolve(&project, &Update::None, policy)?;
+            let req = pack::PackRequest {
+                target,
+                profile,
+                verify: !no_verify,
+                verbose,
+                reporter: Reporter { format: MessageFormat::Human },
+            };
+            pack::pack(&project, &resolution, &req)?;
         }
         Command::Clean { profile } => {
             let project = Project::discover()?;

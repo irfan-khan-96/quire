@@ -42,6 +42,7 @@ cargo install --path .
 | `quire remove <name>` | Remove a dependency. |
 | `quire fetch` | Resolve and download dependencies, write `quire.lock`. |
 | `quire update [names]` | Move git dependencies to the newest commit their branch or tag allows. |
+| `quire pack` | Bundle the sources into `target/arxiv/<name>-arxiv.zip`, checked to compile on their own. |
 | `quire clean` | Delete `target/` (or one `--profile`). |
 | `quire doctor` | Check that the external tools are installed. |
 
@@ -141,6 +142,56 @@ name = "my-style-doc"
 main = "doc/my-style-doc.tex"
 ```
 
+## Submitting to arXiv
+
+```
+$ quire pack
+   Compiling paper (pdflatex, profile `release`)
+    Finished `release` profile in 9.17s → target/release/paper.pdf
+   Verifying the bundle compiles on its own
+      Packed 5 files (0.8 KB) → target/arxiv/paper-arxiv.zip
+```
+
+`quire pack` builds the document, then puts in the zip exactly the files TeX
+read, as recorded by its `-recorder` output:
+
+- **Project files** keep their paths relative to the main file.
+- **Files from path and git dependencies** are copied next to the main file,
+  because arXiv can't fetch them. Their comments are kept, since they often hold
+  license text.
+- **Files from the TeX distribution** are left out, because arXiv has its own.
+  Any other file the build read (an absolute `\input`, a file somewhere else on
+  your disk) is an error, because arXiv won't have it.
+- **The bibliography** goes in as `<main>.bbl`, because arXiv doesn't run Biber.
+  quire warns if it came from biblatex, since arXiv only accepts that if the
+  biblatex versions match.
+- **The main file** starts with `\pdfoutput=1` (for pdflatex), followed by the
+  profile's settings, so class options and `pretex` still apply.
+- **Comments are stripped** the way arXiv's own cleaner does: `% ...` becomes `%`,
+  comment-only lines and `comment` environments go away, and `\verb`, `\url`,
+  `\href` and verbatim environments are left alone.
+
+Before zipping, quire checks the bundle:
+- It refuses `shell-escape`, which arXiv doesn't allow.
+- It rejects file names arXiv won't accept.
+- It warns past arXiv's usual 50 MB limit.
+- It compiles the bundle in a scratch folder with no dependencies and no
+  BibTeX/Biber, as arXiv will.
+
+The zip has sorted entries and fixed timestamps, so the same sources always
+produce the same bytes.
+
+```toml
+[target.arxiv]
+profile = "release"        # default
+flatten = true             # inline \input/\include into the main file (default: false)
+strip-comments = true      # default
+include = ["src/data"]     # extra files the recorder can't see, e.g. data read by a package
+```
+
+The isolated build check uses your local TeX distribution, not arXiv's TeX Live
+version. Use `--no-verify` to skip it.
+
 ## How a build works
 
 1. Dependencies are resolved (using `quire.lock` for git revisions) and the lockfile is updated.
@@ -158,9 +209,9 @@ main = "doc/my-style-doc.tex"
   packages, then lock each one to a TeX Live year, revision and checksum.
 - **Phase 4:** a shared, checksum-verified cache that builds a per-project TeX tree
   from a frozen TeX Live archive.
-- **Phase 5:** `quire pack --target arxiv` (flatten the sources, include the
-  bibliography output, strip comments, check against arXiv's TeX Live version),
-  plus `[target.*]` and features.
+- **Phase 5:** checking bundles against arXiv's exact TeX Live version (needs
+  phase 3), journal targets (`--target ieee|acm|springer`: fonts embedded, no
+  Type 3 fonts, PDF/A), and features.
 - **Phase 6:** pin the engine and fonts, `quire publish` to CTAN, and third-party
   `quire-<cmd>` subcommands.
 

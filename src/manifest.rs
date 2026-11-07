@@ -21,6 +21,9 @@ pub struct Manifest {
     pub build: BuildConfig,
     #[serde(default)]
     pub profile: BTreeMap<String, ProfileConfig>,
+    /// Packaging targets, e.g. `[target.arxiv]`.
+    #[serde(default)]
+    pub target: BTreeMap<String, TargetConfig>,
     /// Top-level keys quire does not understand; reported as warnings.
     #[serde(flatten)]
     pub unused: BTreeMap<String, toml::Value>,
@@ -235,6 +238,24 @@ pub struct ProfileConfig {
     pub latexmk_args: Option<Vec<String>>,
 }
 
+/// Settings for `quire pack --target <name>`.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct TargetConfig {
+    /// Build profile to pack (default: `release`).
+    pub profile: Option<String>,
+    /// Inline `\input`/`\include`d files into the main file.
+    #[serde(default)]
+    pub flatten: bool,
+    /// Remove `%` comments and `comment` environments (default: true).
+    pub strip_comments: Option<bool>,
+    /// Extra files to ship, relative to the project root (e.g. data read by a package).
+    #[serde(default)]
+    pub include: Vec<String>,
+}
+
+pub const SUPPORTED_TARGETS: [&str; 1] = ["arxiv"];
+
 /// A fully resolved build profile.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Profile {
@@ -275,6 +296,11 @@ impl Manifest {
         for (name, dep) in &self.dependencies {
             validate_name(name).with_context(|| format!("invalid dependency name `{name}`"))?;
             dep.to_spec(name)?;
+        }
+        for name in self.target.keys() {
+            if !SUPPORTED_TARGETS.contains(&name.as_str()) {
+                bail!("unknown target `[target.{name}]` (supported: {})", SUPPORTED_TARGETS.join(", "));
+            }
         }
         for name in self.profile.keys() {
             validate_name(name).with_context(|| format!("invalid profile name `{name}`"))?;

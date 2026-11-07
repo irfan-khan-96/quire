@@ -284,18 +284,23 @@ impl Resolution {
     }
 
     /// Environment variables pointing TeX, BibTeX and Biber at the dependencies.
-    pub fn search_env(&self) -> Vec<(&'static str, OsString)> {
+    ///
+    /// BibTeX and Biber run in the output directory, so `.` is not the main
+    /// file's directory for them: it is added explicitly so `.bib`/`.bst` files
+    /// next to the document are found.
+    pub fn search_env(&self, main_dir: &Path) -> Vec<(&'static str, OsString)> {
         let dirs = self.search_dirs();
-        if dirs.is_empty() {
-            return Vec::new();
+        let mut bib_dirs = vec![main_dir.to_path_buf()];
+        bib_dirs.extend(dirs.iter().cloned());
+        let mut env_vars = Vec::new();
+        for (var, dirs) in [("TEXINPUTS", &dirs), ("BIBINPUTS", &bib_dirs), ("BSTINPUTS", &bib_dirs)] {
+            if dirs.is_empty() {
+                continue;
+            }
+            let existing = env::var(var).ok();
+            env_vars.push((var, OsString::from(search_path_value(dirs, existing.as_deref()))));
         }
-        ["TEXINPUTS", "BIBINPUTS", "BSTINPUTS"]
-            .into_iter()
-            .map(|var| {
-                let existing = env::var(var).ok();
-                (var, OsString::from(search_path_value(&dirs, existing.as_deref())))
-            })
-            .collect()
+        env_vars
     }
 }
 
