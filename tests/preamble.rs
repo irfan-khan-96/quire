@@ -78,10 +78,14 @@ fn cached_preamble_is_reused_until_the_preamble_changes() {
     assert!(loaded_format(&doc).starts_with("paper"), "log names format {}", loaded_format(&doc));
     let dumped_at = modified(&fmt_path(&doc));
 
-    // Editing the body reuses the format.
+    // Editing the body reuses the format, and TeX really runs again.
+    let log = doc.join("target/dev/paper.log");
+    let logged_at = modified(&log);
+    std::thread::sleep(std::time::Duration::from_millis(50));
     write_main(&doc, PREAMBLE, "Second.");
     let second = ok(&quire(&doc, tmp.path(), &["build"]));
     assert!(!second.contains("Caching"), "{second}");
+    assert!(modified(&log) > logged_at, "TeX did not rerun after the body changed");
     assert_eq!(modified(&fmt_path(&doc)), dumped_at);
     assert!(loaded_format(&doc).starts_with("paper"));
 

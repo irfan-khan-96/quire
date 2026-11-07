@@ -68,11 +68,14 @@ pub fn build(project: &Project, resolution: &Resolution, req: &BuildRequest) -> 
     };
 
     // latexmk tracks neither the format file nor which file is top-level, so
-    // force a full run whenever either changes.
+    // force a full run whenever either changes. Also force one after a failed
+    // build: some latexmk versions keep reporting the old failure without
+    // recompiling, even after the source was fixed.
     let mode_file = out_dir.join("quire-mode");
+    let failed_marker = out_dir.join("quire-failed");
     let mode = if format.is_some() { "format" } else { "driver" };
     let mode_changed = fs::read_to_string(&mode_file).ok().as_deref() != Some(mode);
-    let force = mode_changed || format.as_ref().is_some_and(|f| f.rebuilt);
+    let force = mode_changed || failed_marker.exists() || format.as_ref().is_some_and(|f| f.rebuilt);
     let _ = fs::write(&mode_file, mode);
 
     let latexmk = |format: Option<&preamble::Format>, force: bool| {
@@ -154,8 +157,10 @@ pub fn build(project: &Project, resolution: &Resolution, req: &BuildRequest) -> 
         if log.is_some() {
             shell::note(format!("full log: {}", project.display(&log_path)));
         }
+        let _ = fs::write(&failed_marker, "");
         bail!("could not compile `{}`", doc.name);
     }
+    let _ = fs::remove_file(&failed_marker);
 
     if let Some(log) = &log {
         let warnings = diagnostics::parse_warnings(log);
