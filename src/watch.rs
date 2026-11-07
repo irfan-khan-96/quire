@@ -11,16 +11,16 @@ use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
 use crate::compile::{self, BuildRequest};
 use crate::lock::LOCK_NAME;
 use crate::project::Project;
-use crate::resolve::{self, Source, Update};
+use crate::resolve::{self, Policy, Source, Update};
 use crate::shell;
 
-pub fn watch(root: &Path, req: &BuildRequest) -> Result<()> {
+pub fn watch(root: &Path, req: &BuildRequest, policy: Policy) -> Result<()> {
     let (tx, rx) = mpsc::channel();
     let mut debouncer = new_debouncer(Duration::from_millis(300), tx).context("failed to start the file watcher")?;
     let mut watched: BTreeSet<PathBuf> = BTreeSet::new();
 
     let mut cycle = |watched: &mut BTreeSet<PathBuf>| {
-        for dir in build_once(root, req) {
+        for dir in build_once(root, req, policy) {
             if watched.contains(&dir) {
                 continue;
             }
@@ -51,17 +51,16 @@ pub fn watch(root: &Path, req: &BuildRequest) -> Result<()> {
 
 /// Build once, printing any error, and return the directories to watch
 /// (the project plus its path dependencies).
-fn build_once(root: &Path, req: &BuildRequest) -> Vec<PathBuf> {
+fn build_once(root: &Path, req: &BuildRequest, policy: Policy) -> Vec<PathBuf> {
     let mut dirs = vec![root.to_path_buf()];
     let result = (|| -> Result<()> {
         let project = Project::load(root)?;
-        let resolution = resolve::resolve(&project, &Update::None)?;
-        dirs.extend(
-            resolution.deps.iter().filter(|d| d.source == Source::Path).filter_map(|d| d.root.clone()),
-        );
+        let resolution = resolve::resolve(&project, &Update::None, policy)?;
+        dirs.extend(resolution.deps.iter().filter(|d| d.source == Source::Path).filter_map(|d| d.root.clone()));
         compile::build(&project, &resolution, req)?;
         Ok(())
     })();
+    req.reporter.finished(result.is_ok());
     if let Err(e) = result {
         shell::error(&e);
     }

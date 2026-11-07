@@ -4,14 +4,17 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::env;
 use std::ffi::OsString;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
+use crate::filelock::{self, FileLock};
 use crate::git;
 use crate::lock::{LockedPackage, Lockfile};
 use crate::manifest::{DepSpec, MANIFEST_NAME, Manifest};
 use crate::project::{Project, normalize, quire_home, tex_path};
+use crate::shell;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
@@ -54,6 +57,15 @@ impl Update {
     }
 }
 
+/// Network and lockfile policy, from `--locked`, `--offline` and `--frozen`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Policy {
+    /// Fail instead of changing `quire.lock`.
+    pub locked: bool,
+    /// Never touch the network; use only the local cache.
+    pub offline: bool,
+}
+
 struct Pending {
     name: String,
     spec: DepSpec,
@@ -64,7 +76,10 @@ struct Pending {
     repo_root: Option<PathBuf>,
 }
 
-pub fn resolve(project: &Project, update: &Update) -> Result<Resolution> {
+pub fn resolve(project: &Project, update: &Update, policy: Policy) -> Result<Resolution> {
+    if policy.locked && !matches!(update, Update::None) {
+        bail!("cannot update dependencies with --locked or --frozen");
+    }
     let lock_path = project.lock_path();
     let old_lock = Lockfile::load(&lock_path)?;
     let mut new_lock = Lockfile::default();
@@ -85,6 +100,8 @@ pub fn resolve(project: &Project, update: &Update) -> Result<Resolution> {
     let mut seen: BTreeMap<String, String> = BTreeMap::new();
     let mut deps = Vec::new();
     let mut home: Option<PathBuf> = None;
+    // Held while the shared git cache is in use.
+    let mut cache_lock: Option<FileLock> = None;
 
     while let Some(Pending { name, spec, base, required_by, repo_root }) = queue.pop_front() {
         let id = source_id(&spec, &base);
@@ -100,19 +117,26 @@ pub fn resolve(project: &Project, update: &Update) -> Result<Resolution> {
 
         let (source, root, dep_repo_root) = match spec {
             DepSpec::TexLive { version } => {
-                deps.push(ResolvedDep { name, source: Source::TexLive { version }, root: None, tex_dir: None, required_by });
+                deps.push(ResolvedDep {
+                    name,
+                    source: Source::TexLive { version },
+                    root: None,
+                    tex_dir: None,
+                    required_by,
+                });
                 continue;
             }
             DepSpec::Path { path } => {
                 let root = normalize(&base.join(&path));
                 if let Some(repo) = &repo_root
-                    && !root.as_ref().is_ok_and(|r| r.starts_with(repo)) {
-                        bail!(
-                            "`{required_by}` comes from git, so its path dependency `{name}` (`{}`) must be inside the same repository\n\
+                    && !root.as_ref().is_ok_and(|r| r.starts_with(repo))
+                {
+                    bail!(
+                        "`{required_by}` comes from git, so its path dependency `{name}` (`{}`) must be inside the same repository\n\
                              help: make `{name}` a git dependency in `{required_by}`'s quire.toml",
-                            tex_path(&path)
-                        );
-                    }
+                        tex_path(&path)
+                    );
+                }
                 let root = root.with_context(|| format!("path dependency `{name}` (required by `{required_by}`)"))?;
                 (Source::Path, root, repo_root.clone())
             }
@@ -121,15 +145,27 @@ pub fn resolve(project: &Project, update: &Update) -> Result<Resolution> {
                     home = Some(quire_home()?);
                 }
                 let home = home.as_deref().unwrap();
+                if cache_lock.is_none() {
+                    cache_lock = Some(filelock::acquire(&home.join(".package-cache"), "package cache")?);
+                }
                 let source = format!("git+{url}{}", reference.query());
                 let locked = match update.includes(&name) {
                     true => None,
                     false => old_lock.find(&name, &source).map(|p| p.rev.clone()),
                 };
-                let db = git::ensure_db(home, &name, &url)?;
+                if locked.is_none() && policy.locked {
+                    bail!(
+                        "`{name}` ({source}) is not in quire.lock, and --locked was given
+                         help: run `quire fetch` without --locked and commit quire.lock"
+                    );
+                }
+                let db = git::ensure_db(home, &name, &url, policy.offline)?;
                 let rev = match locked {
                     Some(rev) => {
                         if !git::has_commit(&db.path, &rev) {
+                            if policy.offline {
+                                bail!("revision {rev} of `{name}` is not in the local cache, and --offline was given");
+                            }
                             git::fetch(&db.path, &url)?;
                             if !git::has_commit(&db.path, &rev) {
                                 bail!(
@@ -141,7 +177,9 @@ pub fn resolve(project: &Project, update: &Update) -> Result<Resolution> {
                         rev
                     }
                     None => {
-                        if !db.fresh {
+                        if policy.offline {
+                            shell::warn(format!("using cached `{name}` without fetching (--offline)"));
+                        } else if !db.fresh {
                             git::fetch(&db.path, &url)?;
                         }
                         git::resolve_ref(&db.path, &reference, &url)
@@ -159,9 +197,20 @@ pub fn resolve(project: &Project, update: &Update) -> Result<Resolution> {
         deps.push(ResolvedDep { name, source, root: Some(root), tex_dir: Some(tex_dir), required_by });
     }
 
-    if !new_lock.packages.is_empty() || lock_path.exists() {
-        new_lock.save(&lock_path)?;
+    let current = fs::read_to_string(&lock_path).ok();
+    let wanted = new_lock.render();
+    let needs_write =
+        (!new_lock.packages.is_empty() || current.is_some()) && current.as_deref() != Some(wanted.as_str());
+    if needs_write {
+        if policy.locked {
+            bail!(
+                "quire.lock needs to be updated, but --locked was given
+                 help: run `quire fetch` without --locked and commit quire.lock"
+            );
+        }
+        fs::write(&lock_path, wanted).with_context(|| format!("failed to write `{}`", lock_path.display()))?;
     }
+    drop(cache_lock);
     Ok(Resolution { own_tex_dir, deps })
 }
 
@@ -186,7 +235,12 @@ fn enqueue(
 
 /// Read a dependency's own `quire.toml` (if any), queue its dependencies and
 /// return the directory to expose to TeX.
-fn visit_package(name: &str, root: &Path, queue: &mut VecDeque<Pending>, repo_root: Option<PathBuf>) -> Result<PathBuf> {
+fn visit_package(
+    name: &str,
+    root: &Path,
+    queue: &mut VecDeque<Pending>,
+    repo_root: Option<PathBuf>,
+) -> Result<PathBuf> {
     let manifest_path = root.join(MANIFEST_NAME);
     if !manifest_path.is_file() {
         // A plain directory or repository of .sty/.cls files.
@@ -226,11 +280,7 @@ fn source_id(spec: &DepSpec, base: &Path) -> String {
 impl Resolution {
     /// Directories TeX should search, in priority order.
     pub fn search_dirs(&self) -> Vec<PathBuf> {
-        self.own_tex_dir
-            .iter()
-            .chain(self.deps.iter().filter_map(|d| d.tex_dir.as_ref()))
-            .cloned()
-            .collect()
+        self.own_tex_dir.iter().chain(self.deps.iter().filter_map(|d| d.tex_dir.as_ref())).cloned().collect()
     }
 
     /// Environment variables pointing TeX, BibTeX and Biber at the dependencies.

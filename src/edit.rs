@@ -8,7 +8,7 @@ use toml_edit::{DocumentMut, InlineTable, Item, Table, value};
 
 use crate::manifest::validate_name;
 use crate::project::Project;
-use crate::resolve::{self, Update};
+use crate::resolve::{self, Policy, Update};
 use crate::shell;
 
 #[derive(Debug, clap::Args)]
@@ -35,10 +35,10 @@ pub struct AddArgs {
     pub version: Option<String>,
 }
 
-pub fn add(project: &Project, args: &AddArgs) -> Result<()> {
+pub fn add(project: &Project, args: &AddArgs, policy: Policy) -> Result<()> {
     validate_name(&args.name).context("invalid dependency name")?;
     let (item, description) = dependency_item(project, args)?;
-    edit_manifest(project, |deps| {
+    edit_manifest(project, policy, |deps| {
         let replaced = deps.contains_key(&args.name);
         deps.insert(&args.name, item);
         shell::status(if replaced { "Updating" } else { "Adding" }, format!("`{}` ({description})", args.name));
@@ -46,8 +46,8 @@ pub fn add(project: &Project, args: &AddArgs) -> Result<()> {
     })
 }
 
-pub fn remove(project: &Project, name: &str) -> Result<()> {
-    edit_manifest(project, |deps| {
+pub fn remove(project: &Project, name: &str, policy: Policy) -> Result<()> {
+    edit_manifest(project, policy, |deps| {
         if deps.remove(name).is_none() {
             bail!("`{name}` is not a dependency of `{}`", project.manifest.name());
         }
@@ -87,7 +87,7 @@ fn dependency_item(project: &Project, args: &AddArgs) -> Result<(Item, String)> 
 
 /// Apply `change` to the `[dependencies]` table, write the manifest, and
 /// re-resolve. If resolution fails, the original manifest is restored.
-fn edit_manifest(project: &Project, change: impl FnOnce(&mut Table) -> Result<()>) -> Result<()> {
+fn edit_manifest(project: &Project, policy: Policy, change: impl FnOnce(&mut Table) -> Result<()>) -> Result<()> {
     let path = project.manifest_path();
     let original = fs::read_to_string(&path).with_context(|| format!("failed to read `{}`", path.display()))?;
     let mut doc: DocumentMut = original.parse().with_context(|| format!("failed to parse `{}`", path.display()))?;
@@ -99,7 +99,7 @@ fn edit_manifest(project: &Project, change: impl FnOnce(&mut Table) -> Result<()
     change(deps)?;
     fs::write(&path, doc.to_string()).with_context(|| format!("failed to write `{}`", path.display()))?;
 
-    let check = Project::load(&project.root).and_then(|p| resolve::resolve(&p, &Update::None).map(|_| ()));
+    let check = Project::load(&project.root).and_then(|p| resolve::resolve(&p, &Update::None, policy).map(|_| ()));
     if let Err(e) = check {
         fs::write(&path, original).with_context(|| format!("failed to restore `{}`", path.display()))?;
         return Err(e.context("quire.toml was left unchanged"));

@@ -48,21 +48,31 @@ pub struct Db {
 }
 
 /// Make sure a bare clone of `url` exists in the cache.
-pub fn ensure_db(home: &Path, name: &str, url: &str) -> Result<Db> {
+pub fn ensure_db(home: &Path, name: &str, url: &str, offline: bool) -> Result<Db> {
     let path = home.join("git").join("db").join(ident(name, url));
     if path.join("HEAD").is_file() {
         return Ok(Db { path, fresh: false });
     }
-    if path.exists() {
-        fs::remove_dir_all(&path).with_context(|| format!("failed to clear `{}`", path.display()))?;
+    if offline {
+        bail!("`{name}` ({url}) is not in the local cache, and --offline was given");
     }
     fs::create_dir_all(path.parent().unwrap())?;
     shell::status("Cloning", url);
-    let dest = path.to_string_lossy().to_string();
+    // Clone next to the final location, then rename, so an interrupted clone
+    // never leaves a half-written repository in the cache.
+    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    if tmp.exists() {
+        fs::remove_dir_all(&tmp).with_context(|| format!("failed to clear `{}`", tmp.display()))?;
+    }
+    let dest = tmp.to_string_lossy().to_string();
     if let Err(e) = run_git(None, &["clone", "--bare", "--quiet", url, &dest]) {
-        let _ = fs::remove_dir_all(&path);
+        let _ = fs::remove_dir_all(&tmp);
         return Err(e.context(format!("failed to clone `{url}`")));
     }
+    if path.exists() {
+        fs::remove_dir_all(&path).with_context(|| format!("failed to clear `{}`", path.display()))?;
+    }
+    fs::rename(&tmp, &path).with_context(|| format!("failed to move clone into `{}`", path.display()))?;
     Ok(Db { path, fresh: true })
 }
 

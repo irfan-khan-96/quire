@@ -128,3 +128,111 @@ fn builds_with_a_path_dependency() {
     let driver = fs::read_to_string(doc.join("target/draft/quire-driver.tex")).unwrap();
     assert!(driver.contains("\\PassOptionsToClass{draft}{article}"));
 }
+
+/// A package repository with one commit, and a document depending on it.
+fn project_with_git_dep(tmp: &Path, home: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    ok(&quire(tmp, home, &["new", "macros", "--template", "package", "--vcs", "none"]));
+    let pkg = tmp.join("macros");
+    git(&pkg, &["init", "-q"]);
+    git(&pkg, &["add", "-A"]);
+    git(&pkg, &["commit", "-qm", "one"]);
+    ok(&quire(tmp, home, &["new", "paper", "--vcs", "none"]));
+    let doc = tmp.join("paper");
+    let manifest = fs::read_to_string(doc.join("quire.toml")).unwrap();
+    let manifest = manifest.replacen(
+        "[dependencies]\n",
+        &format!("[dependencies]\nmacros = {{ git = \"{}\" }}\n", file_url(&pkg)),
+        1,
+    );
+    fs::write(doc.join("quire.toml"), manifest).unwrap();
+    (pkg, doc)
+}
+
+#[test]
+fn locked_refuses_to_change_the_lockfile() {
+    if !has("git") {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let home = tmp.path().join("home");
+    let (_, doc) = project_with_git_dep(tmp.path(), &home);
+
+    let out = quire(&doc, &home, &["fetch", "--locked"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not in quire.lock"));
+    assert!(!doc.join("quire.lock").exists());
+
+    ok(&quire(&doc, &home, &["fetch"]));
+    ok(&quire(&doc, &home, &["fetch", "--locked"]));
+    assert!(!quire(&doc, &home, &["update", "--locked"]).status.success());
+}
+
+#[test]
+fn offline_uses_only_the_cache() {
+    if !has("git") {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let home = tmp.path().join("home");
+    let (_, doc) = project_with_git_dep(tmp.path(), &home);
+
+    let out = quire(&doc, &home, &["fetch", "--offline"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--offline"));
+
+    ok(&quire(&doc, &home, &["fetch"]));
+    // Once cached and locked, a frozen resolve needs no network.
+    ok(&quire(&doc, &home, &["fetch", "--frozen"]));
+}
+
+#[test]
+fn json_messages_describe_errors_and_artifacts() {
+    if !has("latexmk") {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    ok(&quire(tmp.path(), tmp.path(), &["new", "paper", "--vcs", "none"]));
+    let doc = tmp.path().join("paper");
+    let main = doc.join("src/main.tex");
+    fs::write(
+        &main,
+        r"\documentclass{article}
+\begin{document}
+\nosuchmacro
+\end{document}
+",
+    )
+    .unwrap();
+
+    let parse = |out: &Output| -> Vec<serde_json::Value> {
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("not JSON: {l} ({e})")))
+            .collect()
+    };
+
+    let failed = quire(&doc, tmp.path(), &["build", "--message-format", "json"]);
+    assert!(!failed.status.success());
+    let messages = parse(&failed);
+    let error = messages.iter().find(|m| m["reason"] == "compiler-message").expect("an error message");
+    assert_eq!(error["message"]["level"], "error");
+    assert_eq!(error["message"]["line"], 3);
+    assert!(error["message"]["file"].as_str().unwrap().ends_with("src/main.tex"));
+    assert_eq!(messages.last().unwrap()["success"], false);
+
+    fs::write(
+        &main,
+        r"\documentclass{article}
+\begin{document}
+Hi
+\end{document}
+",
+    )
+    .unwrap();
+    let built = quire(&doc, tmp.path(), &["build", "--message-format", "json"]);
+    let messages = parse(&built);
+    let artifact = messages.iter().find(|m| m["reason"] == "document-artifact").expect("an artifact");
+    assert!(artifact["pdf"].as_str().unwrap().ends_with("target/dev/paper.pdf"));
+    assert_eq!(messages.last().unwrap()["reason"], "build-finished");
+    assert_eq!(messages.last().unwrap()["success"], true);
+}

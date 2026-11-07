@@ -1,8 +1,10 @@
 //! quire: a Cargo-like build tool and package manager for LaTeX.
 
 mod compile;
+mod diagnostics;
 mod doctor;
 mod edit;
+mod filelock;
 mod git;
 mod lock;
 mod manifest;
@@ -20,14 +22,30 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
 
 use compile::BuildRequest;
+use diagnostics::{MessageFormat, Reporter};
 use project::Project;
-use resolve::Update;
+use resolve::{Policy, Update};
 
 #[derive(Parser)]
 #[command(name = "quire", version, about = "A Cargo-like build tool and package manager for LaTeX")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
+    /// Fail instead of changing quire.lock
+    #[arg(long, global = true)]
+    locked: bool,
+    /// Do not access the network; use only cached dependencies
+    #[arg(long, global = true)]
+    offline: bool,
+    /// Same as --locked --offline
+    #[arg(long, global = true)]
+    frozen: bool,
+}
+
+impl Cli {
+    fn policy(&self) -> Policy {
+        Policy { locked: self.locked || self.frozen, offline: self.offline || self.frozen }
+    }
 }
 
 #[derive(Subcommand)]
@@ -91,12 +109,16 @@ struct BuildArgs {
     /// Show the full latexmk output
     #[arg(long, short = 'v')]
     verbose: bool,
+    /// Output format for diagnostics: `json` prints one JSON object per line on stdout
+    #[arg(long, value_enum, default_value_t = MessageFormat::Human)]
+    message_format: MessageFormat,
 }
 
 impl BuildArgs {
     fn request(&self) -> BuildRequest {
-        let profile = if self.release { "release".to_string() } else { self.profile.clone().unwrap_or_else(|| "dev".into()) };
-        BuildRequest { profile, verbose: self.verbose }
+        let profile =
+            if self.release { "release".to_string() } else { self.profile.clone().unwrap_or_else(|| "dev".into()) };
+        BuildRequest { profile, verbose: self.verbose, reporter: Reporter { format: self.message_format } }
     }
 }
 
@@ -112,20 +134,25 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<bool> {
+    let policy = cli.policy();
     match cli.command {
         Command::New { path, args } => scaffold::new_project(&path, &args)?,
         Command::Init { args } => scaffold::init_project(&std::env::current_dir()?, &args)?,
         Command::Build { build, open } => {
-            let project = Project::discover()?;
-            let resolution = resolve::resolve(&project, &Update::None)?;
-            let pdf = compile::build(&project, &resolution, &build.request())?;
+            let req = build.request();
+            let result = Project::discover().and_then(|project| {
+                let resolution = resolve::resolve(&project, &Update::None, policy)?;
+                compile::build(&project, &resolution, &req)
+            });
+            req.reporter.finished(result.is_ok());
+            let pdf = result?;
             if open {
                 open_file(&pdf)?;
             }
         }
         Command::Watch { build } => {
             let project = Project::discover()?;
-            watch::watch(&project.root, &build.request())?;
+            watch::watch(&project.root, &build.request(), policy)?;
         }
         Command::Clean { profile } => {
             let project = Project::discover()?;
@@ -138,11 +165,11 @@ fn run(cli: Cli) -> Result<bool> {
                 shell::status("Removed", project.display(&dir));
             }
         }
-        Command::Add(args) => edit::add(&Project::discover()?, &args)?,
-        Command::Remove { name } => edit::remove(&Project::discover()?, &name)?,
+        Command::Add(args) => edit::add(&Project::discover()?, &args, policy)?,
+        Command::Remove { name } => edit::remove(&Project::discover()?, &name, policy)?,
         Command::Fetch => {
             let project = Project::discover()?;
-            let resolution = resolve::resolve(&project, &Update::None)?;
+            let resolution = resolve::resolve(&project, &Update::None, policy)?;
             report_deps(&resolution);
         }
         Command::Update { names } => {
@@ -153,7 +180,7 @@ fn run(cli: Cli) -> Result<bool> {
                 }
             }
             let update = if names.is_empty() { Update::All } else { Update::Only(names) };
-            let resolution = resolve::resolve(&project, &update)?;
+            let resolution = resolve::resolve(&project, &update, policy)?;
             report_deps(&resolution);
         }
         Command::Doctor => return Ok(doctor::doctor()),
@@ -165,7 +192,9 @@ fn report_deps(resolution: &resolve::Resolution) {
     for dep in &resolution.deps {
         let source = match &dep.source {
             resolve::Source::TexLive { version } => format!("TeX distribution ({version})"),
-            resolve::Source::Path => format!("path {}", dep.root.as_ref().map(|p| project::tex_path(p)).unwrap_or_default()),
+            resolve::Source::Path => {
+                format!("path {}", dep.root.as_ref().map(|p| project::tex_path(p)).unwrap_or_default())
+            }
             resolve::Source::Git { url, rev } => format!("git {url} @ {}", &rev[..rev.len().min(12)]),
         };
         shell::status("Resolved", format!("{} — {source} (required by {})", dep.name, dep.required_by));
