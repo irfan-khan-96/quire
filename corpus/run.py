@@ -16,12 +16,15 @@ Failures are classified:
             fails unless the paper is listed in known-issues.txt.
   paper     plain latexmk fails as well (missing packages, DVI-only papers, ...)
   skipped   no TeX source on arXiv (PDF-only submissions)
+  unavailable  the download failed even after retries
 
     python corpus/run.py [--quire PATH] [--shard I/N] [--limit N] [--only ID ...]
+    python corpus/run.py --fetch-only      # fill the cache, nothing else
 """
 
 import argparse
 import gzip
+import http.client
 import io
 import json
 import os
@@ -32,6 +35,7 @@ import sys
 import tarfile
 import threading
 import time
+import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -68,16 +72,29 @@ def fetch(paper, cache):
     if blob.exists():
         return blob.read_bytes()
     with _download_lock:
-        # arXiv asks automated clients to wait three seconds between requests.
-        wait = _last_download + 3 - time.monotonic()
-        if wait > 0:
-            time.sleep(wait)
-        request = urllib.request.Request(EPRINT.format(paper), headers={"User-Agent": USER_AGENT})
-        try:
-            with urllib.request.urlopen(request, timeout=120) as response:
-                data = response.read()
-        finally:
-            _last_download = time.monotonic()
+        delay = 15
+        for attempt in range(6):
+            # arXiv asks automated clients to wait three seconds between requests.
+            wait = _last_download + 3 - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
+            request = urllib.request.Request(EPRINT.format(paper), headers={"User-Agent": USER_AGENT})
+            try:
+                with urllib.request.urlopen(request, timeout=120) as response:
+                    data = response.read()
+                break
+            except (urllib.error.URLError, http.client.HTTPException, TimeoutError) as e:
+                status = getattr(e, "code", None)
+                if (status is not None and status not in (429, 500, 502, 503, 504)) or attempt == 5:
+                    raise
+                # Rate limited or cut off: back off, as long as the server asks.
+                retry_after = getattr(e, "headers", None) and e.headers.get("Retry-After")
+                pause = int(retry_after) if retry_after and retry_after.isdigit() else delay
+                print(f"  {paper}: {e}; retrying in {pause}s", flush=True)
+                time.sleep(min(pause, 300))
+                delay *= 2
+            finally:
+                _last_download = time.monotonic()
     cache.mkdir(parents=True, exist_ok=True)
     tmp = blob.with_suffix(".part")
     tmp.write_bytes(data)
@@ -227,7 +244,7 @@ def _test_paper(paper, category, args):
     try:
         data = fetch(paper, args.cache)
     except Exception as e:  # network trouble is not a quire failure
-        return {**result, "class": "skipped", "reason": f"download failed: {e}"}
+        return {**result, "class": "unavailable", "reason": f"download failed: {e}"}
     if not unpack(data, work / "src"):
         return {**result, "class": "skipped", "reason": "no TeX source (PDF only)"}
     src = work / "src"
@@ -299,10 +316,13 @@ def summarize(results, known):
     counts = {}
     for r in results:
         counts[r["class"]] = counts.get(r["class"], 0) + 1
-    tested = len(results) - counts.get("skipped", 0)
+    tested = len(results) - counts.get("skipped", 0) - counts.get("unavailable", 0)
     lines = ["# quire corpus results", ""]
-    lines.append(f"{len(results)} papers, {tested} with TeX source: "
+    lines.append(f"{len(results)} papers, {tested} tested: "
                  + ", ".join(f"**{counts.get(c, 0)}** {c}" for c in ("ok", "quire", "paper", "skipped")))
+    if counts.get("unavailable"):
+        lines.append("")
+        lines.append(f"**{counts['unavailable']}** could not be downloaded from arXiv and were not tested.")
     buildable = counts.get("ok", 0) + counts.get("quire", 0)
     if buildable:
         lines.append("")
@@ -321,7 +341,7 @@ def summarize(results, known):
             continue
         lines += ["", f"## {title}", "", "| Paper | Stage | Reason |", "|---|---|---|"]
         for r in sorted(rows, key=lambda r: r["id"]):
-            reason = r.get("latexmk_reason") if cls == "paper" else r.get("reason")
+            reason = (r.get("latexmk_reason") if cls == "paper" else None) or r.get("reason")
             note = f" (known: {known[r['id']]})" if r["id"] in known else ""
             reason = (reason or "").replace("|", "\\|")
             lines.append(f"| [{r['id']}](https://arxiv.org/abs/{r['id']}) | {r.get('stage', '')} | `{reason}`{note} |")
@@ -349,18 +369,21 @@ def main():
     parser.add_argument("--keep", action="store_true", help="keep the folders of failed papers for debugging")
     parser.add_argument("--merge", nargs="+", type=Path, metavar="RESULTS",
                         help="combine results.json files from several shards instead of testing")
+    parser.add_argument("--fetch-only", action="store_true", help="only download the sources into the cache")
     args = parser.parse_args()
     known = {p[0]: (p[1] if len(p) > 1 else "") for p in read_list(HERE / "known-issues.txt")}
     if args.merge:
         results = [r for path in args.merge for r in json.loads(path.read_text(encoding="utf-8"))]
         return report(results, known, args)
+    args.cache = args.cache.resolve()
+    papers = read_list(args.papers)
+    if args.fetch_only:
+        return fetch_all(papers, args.cache)
     if not args.quire:
         sys.exit("quire not found; pass --quire")
     args.quire = args.quire.resolve()
     args.work = args.work.resolve()
-    args.cache = args.cache.resolve()
 
-    papers = read_list(args.papers)
     if args.only:
         papers = [p for p in papers if p[0] in args.only] or [[p, "?"] for p in args.only]
     index, count = map(int, args.shard.split("/"))
@@ -377,6 +400,21 @@ def main():
         results = list(pool.map(one, papers))
     args.out.write_text(json.dumps(results, indent=1), encoding="utf-8")
     report(results, known, args)
+
+
+def fetch_all(papers, cache):
+    """Download every source, one at a time, so the test shards need no network."""
+    failed = []
+    for i, entry in enumerate(papers, 1):
+        cached = (cache / f"{entry[0]}.eprint").exists()
+        try:
+            fetch(entry[0], cache)
+        except Exception as e:
+            failed.append(entry[0])
+            print(f"  {entry[0]}: {e}", flush=True)
+        if not cached and i % 25 == 0:
+            print(f"{i}/{len(papers)} fetched", flush=True)
+    print(f"{len(papers) - len(failed)} of {len(papers)} sources cached; {len(failed)} failed")
 
 
 def report(results, known, args):

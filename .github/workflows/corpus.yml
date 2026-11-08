@@ -36,9 +36,27 @@ jobs:
           path: target/release/quire
           retention-days: 3
 
+  # One job downloads every source, one request at a time: six shards
+  # downloading in parallel get rate limited by arXiv. Each run saves a new
+  # cache entry built on the previous one, so only new or failed papers are
+  # fetched again.
+  fetch:
+    name: Fetch arXiv sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: corpus/cache
+          key: corpus-sources-${{ hashFiles('corpus/papers.txt') }}-${{ github.run_id }}
+          restore-keys: |
+            corpus-sources-${{ hashFiles('corpus/papers.txt') }}-
+            corpus-sources-
+      - run: python3 corpus/run.py --fetch-only
+
   corpus:
     name: Papers (shard ${{ matrix.shard }})
-    needs: build
+    needs: [build, fetch]
     runs-on: ubuntu-latest
     # The full TeX Live, so failures are quire's or the paper's, not missing packages.
     container: texlive/texlive:latest
@@ -55,12 +73,12 @@ jobs:
           path: bin
       - name: Install Python
         run: command -v python3 || (apt-get update && apt-get install -y --no-install-recommends python3)
-      - name: Cache arXiv sources
-        uses: actions/cache@v4
+      - name: Restore arXiv sources
+        uses: actions/cache/restore@v4
         with:
           path: corpus/cache
-          key: corpus-${{ matrix.shard }}-${{ hashFiles('corpus/papers.txt') }}
-          restore-keys: corpus-${{ matrix.shard }}-
+          key: corpus-sources-${{ hashFiles('corpus/papers.txt') }}-${{ github.run_id }}
+          restore-keys: corpus-sources-${{ hashFiles('corpus/papers.txt') }}-
       - name: Run
         run: |
           chmod +x bin/quire

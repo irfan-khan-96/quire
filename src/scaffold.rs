@@ -145,7 +145,8 @@ fn find_existing_main(dir: &Path) -> Option<Existing> {
         let referenced: Vec<String> = docs.iter().flat_map(|(_, text)| inputs(text)).collect();
         docs.sort_by_cached_key(|(path, text)| {
             let stem = path.file_stem().unwrap_or_default().to_string_lossy().to_lowercase();
-            let secondary = document_class(text) == Some("standalone") || referenced.contains(&stem);
+            let secondary =
+                crate::compile::document_class(text).as_deref() == Some("standalone") || referenced.contains(&stem);
             let conventional = ["main", "paper", "ms", "manuscript", "article", "thesis"].contains(&stem.as_str());
             (secondary, !conventional, std::cmp::Reverse(text.len()), path.clone())
         });
@@ -168,17 +169,6 @@ fn find_existing_main(dir: &Path) -> Option<Existing> {
 fn read_tex(path: &Path) -> Option<String> {
     let bytes = fs::read(path).ok()?;
     Some(crate::pack::strip_tex_comments(&String::from_utf8_lossy(&bytes)))
-}
-
-/// The class in `\documentclass[...]{class}`.
-fn document_class(text: &str) -> Option<&str> {
-    let rest = text[text.find("\\documentclass")? + "\\documentclass".len()..].trim_start();
-    let rest = match rest.strip_prefix('[') {
-        Some(options) => &options[options.find(']')? + 1..],
-        None => rest,
-    };
-    let rest = rest.trim_start().strip_prefix('{')?;
-    Some(rest[..rest.find('}')?].trim())
 }
 
 /// Names of the files `\input`/`\include`d, lowercased and without `.tex`.
@@ -489,7 +479,6 @@ mod tests {
         assert_eq!(engine_for("\\usepackage{amsmath,unicode-math}"), Some(Engine::Xelatex));
         assert_eq!(engine_for("\\usepackage{luacode}"), Some(Engine::Lualatex));
         assert_eq!(engine_for(&crate::pack::strip_tex_comments("%\\usepackage{fontspec}\n")), None);
-        assert_eq!(document_class("\\documentclass [12pt, a4paper]\n{ revtex4-2 }"), Some("revtex4-2"));
         assert_eq!(inputs("\\input{figs/Plot.tex} \\include{ch1}"), ["plot", "ch1"]);
     }
 

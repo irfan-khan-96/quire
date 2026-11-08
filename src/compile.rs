@@ -232,8 +232,10 @@ fn error_is_in_body(log_path: &Path, since: SystemTime, main_dir: &Path, main: &
     if file != tex_path(main) {
         return true;
     }
+    // `\begin{document}` itself runs the preamble's `\AtBeginDocument` hooks,
+    // so an error on that line may well come from the cache.
     let preamble_lines = preamble::split_point(source).map(|i| source[..i].lines().count()).unwrap_or(0);
-    line as usize > preamble_lines
+    line as usize > preamble_lines + 1
 }
 
 /// latexmk failed only because a tool failed in an earlier run.
@@ -383,6 +385,22 @@ fn check_distribution_deps(resolution: &Resolution) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn errors_at_begin_document_may_come_from_the_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("main.tex");
+        let source = "\\documentclass{article}\n\\usepackage{x}\n\\begin{document}\nHi.\n\\end{document}\n";
+        let log = dir.path().join("main.log");
+        let since = SystemTime::now() - std::time::Duration::from_secs(5);
+        let in_body = |line: usize| {
+            fs::write(&log, format!("./main.tex:{line}: Extra \\fi.\nl.{line} x\n")).unwrap();
+            error_is_in_body(&log, since, dir.path(), &main, source)
+        };
+        assert!(!in_body(2));
+        assert!(!in_body(3), "the \\begin{{document}} line runs preamble hooks");
+        assert!(in_body(4));
+    }
 
     fn profile(class_options: &[&str]) -> Profile {
         Profile {

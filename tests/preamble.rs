@@ -117,6 +117,24 @@ fn errors_in_the_body_are_reported_from_the_cached_build() {
 }
 
 #[test]
+fn cached_preamble_sees_normal_catcodes() {
+    if !available() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let doc = project(tmp.path(), "Hi.");
+    // mylatexformat leaves `@` a letter; a preamble must not see that, or code
+    // that only works with the cache would fail on arXiv.
+    write_main(
+        &doc,
+        "\\documentclass{article}\n\\edef\\atcat{\\the\\catcode`\\@}\n",
+        "\\ifnum\\atcat=11 \\errmessage{@ was a letter in the preamble}\\fi Hi.",
+    );
+    ok(&quire(&doc, tmp.path(), &["build"]));
+    assert!(loaded_format(&doc).starts_with("paper"));
+}
+
+#[test]
 fn uncacheable_preambles_fall_back_and_are_remembered() {
     if !available() {
         return;
