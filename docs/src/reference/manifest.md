@@ -12,8 +12,26 @@ A buildable document. A manifest needs `[document]`, `[package]`, or both.
 |---|---|---|
 | `name` | required | Output name: `target/<profile>/<name>.pdf`. Letters, digits, `-` and `_`. |
 | `main` | `"src/main.tex"` | The main `.tex` file, relative to `quire.toml`. |
+| `root` | the main file's folder | The folder TeX runs in, relative to `quire.toml`. Paths in `\input`, `\includegraphics` and `\bibliography` are relative to it. Must contain `main`. |
 | `engine` | `"pdflatex"` | `"pdflatex"`, `"xelatex"` or `"lualatex"`. |
 | `texlive` | | TeX Live release to target. Recorded, but not enforced yet. |
+
+By default TeX runs in the main file's folder, so a main file in `src/` uses
+paths like `\input{chapters/intro}` for `src/chapters/intro.tex`. Some
+projects, often arXiv sources, keep the main file in a subfolder but write
+paths from the top folder, because arXiv compiles there:
+
+```toml
+[document]
+name = "paper"
+main = "EJ_Submission/paper.tex"
+root = "."   # \includegraphics{figures/plot} means ./figures/plot.pdf
+```
+
+`quire pack` then keeps the main file at `EJ_Submission/paper.tex` in the
+bundle and adds a `00README.json` that names it as the top-level file.
+`quire init` sets `root = "."` when it adopts a main file in a subfolder from
+arXiv's `00README.json`.
 
 ## `[package]`
 

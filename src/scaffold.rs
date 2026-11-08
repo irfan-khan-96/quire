@@ -78,8 +78,11 @@ pub fn init_project(dir: &Path, args: &NewArgs) -> Result<()> {
             shell::note(format!("using {} for the packages the document loads", detected.as_str()));
         }
     }
-    let existing = existing.map(|found| found.main);
-    let files = template_files(&name, args.template, engine, existing.as_deref());
+    if existing.as_ref().is_some_and(|found| found.from_top) {
+        shell::note("compiling from the top folder, as arXiv does (`root` in quire.toml)");
+    }
+    let existing = existing.map(|found| (found.main, found.from_top));
+    let files = template_files(&name, args.template, engine, existing.as_ref().map(|(m, top)| (m.as_path(), *top)));
     let files: Vec<(PathBuf, String)> = files.into_iter().filter(|(p, _)| !dir.join(p).exists()).collect();
     write_files(dir, &files)?;
     init_vcs(dir, args.vcs);
@@ -118,6 +121,9 @@ struct Existing {
     engine: Option<Engine>,
     /// Other complete documents that could have been the main file.
     others: Vec<PathBuf>,
+    /// The main file is in a subfolder but its paths are relative to the
+    /// project directory, where arXiv compiles: set `root = "."`.
+    from_top: bool,
 }
 
 /// The document's main file, in the directory or its `src/`: the one arXiv's
@@ -129,7 +135,9 @@ fn find_existing_main(dir: &Path) -> Option<Existing> {
     let (readme_main, readme_engine) = arxiv_readme(dir);
     if let Some(main) = readme_main {
         let engine = readme_engine.or_else(|| read_tex(&dir.join(&main)).as_deref().and_then(engine_for));
-        return Some(Existing { main, engine, others: vec![] });
+        // arXiv compiles from the top folder, whichever folder the top-level file is in.
+        let from_top = main.parent().is_some_and(|p| !p.as_os_str().is_empty());
+        return Some(Existing { main, engine, others: vec![], from_top });
     }
     for sub in [Path::new("."), Path::new("src")] {
         let Ok(entries) = fs::read_dir(dir.join(sub)) else { continue };
@@ -159,6 +167,7 @@ fn find_existing_main(dir: &Path) -> Option<Existing> {
             main: relative(&docs[0].0),
             engine,
             others: docs[1..].iter().map(|(p, _)| relative(p)).collect(),
+            from_top: false,
         });
     }
     None
@@ -282,7 +291,7 @@ fn template_files(
     name: &str,
     template: Template,
     engine: Engine,
-    existing_main: Option<&Path>,
+    existing_main: Option<(&Path, bool)>,
 ) -> Vec<(PathBuf, String)> {
     let mut files = vec![(PathBuf::from(".gitignore"), "/target/\n".to_string())];
     let title = tex_escape(name);
@@ -327,14 +336,20 @@ engine = "{engine}"
         return files;
     }
 
-    let main = existing_main.map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_else(|| "src/main.tex".into());
+    let main =
+        existing_main.map(|(p, _)| p.to_string_lossy().replace('\\', "/")).unwrap_or_else(|| "src/main.tex".into());
+    let root = if existing_main.is_some_and(|(_, from_top)| from_top) {
+        "# Paths in the document are relative to this folder, as on arXiv.\nroot = \".\"\n"
+    } else {
+        ""
+    };
     files.push((
         PathBuf::from(MANIFEST_NAME),
         format!(
             r#"[document]
 name = "{name}"
 main = "{main}"
-engine = "{engine}"
+{root}engine = "{engine}"
 
 [dependencies]
 # Packages from your TeX distribution:
@@ -463,7 +478,13 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), &[("main.tex", PAPER), ("sub/p.tex", PAPER), ("00README.XXX", b"sub/p.tex toplevelfile\n")]);
-        assert_eq!(find_existing_main(dir.path()).unwrap().main, Path::new("sub/p.tex"));
+        let found = find_existing_main(dir.path()).unwrap();
+        assert_eq!(found.main, Path::new("sub/p.tex"));
+        assert!(found.from_top);
+        let files = template_files("p", Template::Article, Engine::Pdflatex, Some((&found.main, found.from_top)));
+        let (_, manifest) = files.iter().find(|(p, _)| p == Path::new(MANIFEST_NAME)).unwrap();
+        let doc = Manifest::parse(manifest).unwrap().document.unwrap();
+        assert_eq!(doc.root.as_deref(), Some(Path::new(".")));
     }
 
     #[test]

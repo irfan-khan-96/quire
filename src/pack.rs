@@ -3,8 +3,10 @@
 //!
 //! The document is built first with TeX's recorder on, so the `.fls` file lists
 //! every file TeX actually read. Project files keep their paths relative to the
-//! main file. Files from path and git dependencies are copied ("vendored") next
-//! to the main file, because arXiv cannot fetch them. Files from the TeX
+//! folder TeX runs in (`document.root`, by default the main file's folder),
+//! which becomes the top of the bundle. Files from path and git dependencies
+//! are copied ("vendored") to the top of the bundle, because arXiv cannot fetch
+//! them. Files from the TeX
 //! distribution are left out, because arXiv has its own. The generated `.bbl`
 //! goes in too, because arXiv does not run Biber.
 
@@ -71,10 +73,12 @@ pub fn pack(project: &Project, resolution: &Resolution, req: &PackRequest) -> Re
         &BuildRequest { profile: profile.name.clone(), verbose: req.verbose, reporter: req.reporter },
     )?;
 
-    let main = normalize(&project.root.join(&doc.main))?;
-    let main_dir = main.parent().unwrap().to_path_buf();
-    let main_name = main.file_name().unwrap().to_string_lossy().to_string();
-    let main_stem = Path::new(&main_name).file_stem().unwrap().to_string_lossy().to_string();
+    let layout = compile::layout(project, doc)?;
+    let main = normalize(&layout.main)?;
+    let tex_dir = normalize(&layout.tex_dir)?;
+    // The main file's path in the bundle, e.g. `paper.tex` or `sub/paper.tex`.
+    let main_name = layout.main_rel;
+    let main_stem = main.file_stem().unwrap().to_string_lossy().to_string();
     let out_dir = project.target_dir().join(&profile.name);
     let mut recorded = Vec::new();
     for fls_path in &built.recorder_files {
@@ -96,18 +100,19 @@ pub fn pack(project: &Project, resolution: &Resolution, req: &PackRequest) -> Re
         if path == main || path.starts_with(&target_dir) || path.is_dir() {
             continue;
         }
-        if let Ok(relative) = path.strip_prefix(&main_dir) {
+        if let Ok(relative) = path.strip_prefix(&tex_dir) {
             add_file(&mut files, tex_path(relative), path.clone())?;
         } else if vendor_dirs.iter().any(|d| path.starts_with(d)) {
-            // Found through the search path, so TeX finds it by name next to the main file.
+            // Found through the search path, so TeX finds it by name at the top of the bundle.
             let name = path.file_name().unwrap().to_string_lossy().to_string();
             add_file(&mut files, name, path.clone())?;
         } else if path.starts_with(&root) {
             bail!(
-                "`{}` is outside the main file's directory (`{}`)\n\
-                 help: arXiv resolves paths from the main file's directory; move the file under it",
+                "`{}` is outside the folder TeX runs in (`{}`)\n\
+                 help: arXiv resolves paths from the top of the bundle; move the file under that folder, \
+                 or set `root` in [document] to a folder that contains it",
                 project.display(&path),
-                project.display(&main_dir)
+                project.display(&tex_dir)
             );
         } else if personal.as_ref().is_some_and(|p| path.starts_with(p)) {
             shell::warn(format!(
@@ -126,7 +131,7 @@ pub fn pack(project: &Project, resolution: &Resolution, req: &PackRequest) -> Re
         bail!(
             "these files were read from outside the project, its dependencies and the TeX distribution, \
              so arXiv won't have them:\n{}\n\
-             help: move them under the main file's directory, or make their folder a path dependency",
+             help: move them into the project, or make their folder a path dependency",
             list.join("\n")
         );
     }
@@ -136,14 +141,14 @@ pub fn pack(project: &Project, resolution: &Resolution, req: &PackRequest) -> Re
     // Graphics the recorder may miss (xelatex and lualatex do not always record them).
     let mut tex_sources = vec![main_source.clone()];
     for (dest, src) in &files {
-        if dest.ends_with(".tex") && src.starts_with(&main_dir) {
+        if dest.ends_with(".tex") && src.starts_with(&tex_dir) {
             tex_sources.push(fs::read_to_string(src).unwrap_or_default());
         }
     }
     for source in &tex_sources {
         for graphic in included_graphics(source) {
-            if let Some(path) = find_graphic(&main_dir, &graphic) {
-                let dest = tex_path(path.strip_prefix(&main_dir).unwrap());
+            if let Some(path) = find_graphic(&tex_dir, &graphic) {
+                let dest = tex_path(path.strip_prefix(&tex_dir).unwrap());
                 files.entry(dest).or_insert(path);
             }
         }
@@ -151,12 +156,12 @@ pub fn pack(project: &Project, resolution: &Resolution, req: &PackRequest) -> Re
 
     for extra in &cfg.include {
         let path = normalize(&project.root.join(extra)).with_context(|| format!("`include` entry `{extra}`"))?;
-        let Ok(relative) = path.strip_prefix(&main_dir) else {
-            bail!("`include` entry `{extra}` must be inside the main file's directory");
+        let Ok(relative) = path.strip_prefix(&tex_dir) else {
+            bail!("`include` entry `{extra}` must be inside the folder TeX runs in (`document.root`)");
         };
         if path.is_dir() {
             for file in walk(&path)? {
-                add_file(&mut files, tex_path(file.strip_prefix(&main_dir).unwrap()), file.clone())?;
+                add_file(&mut files, tex_path(file.strip_prefix(&tex_dir).unwrap()), file.clone())?;
             }
         } else {
             add_file(&mut files, tex_path(relative), path.clone())?;
@@ -168,7 +173,7 @@ pub fn pack(project: &Project, resolution: &Resolution, req: &PackRequest) -> Re
     let mut body = main_source.clone();
     if cfg.flatten {
         let mut inlined = BTreeSet::new();
-        body = flatten(&main_dir, &body, &mut inlined, 0)?;
+        body = flatten(&tex_dir, &body, &mut inlined, 0)?;
         files.retain(|dest, _| !inlined.contains(dest));
     }
     let mut main_text = String::new();
@@ -185,7 +190,7 @@ pub fn pack(project: &Project, resolution: &Resolution, req: &PackRequest) -> Re
         let bytes = fs::read(src).with_context(|| format!("failed to read `{}`", src.display()))?;
         // Only the project's own .tex files are rewritten; vendored packages keep
         // their comments (often license text).
-        let bytes = if strip && dest.ends_with(".tex") && src.starts_with(&main_dir) {
+        let bytes = if strip && dest.ends_with(".tex") && src.starts_with(&tex_dir) {
             maybe_strip(&String::from_utf8_lossy(&bytes), true).into_bytes()
         } else {
             bytes
@@ -193,7 +198,13 @@ pub fn pack(project: &Project, resolution: &Resolution, req: &PackRequest) -> Re
         entries.insert(dest.clone(), bytes);
     }
 
-    // 4. The bibliography, already processed.
+    // arXiv looks for the main file at the top unless 00README.json names it.
+    if main_name.contains('/') {
+        entries.insert("00README.json".into(), arxiv_readme(&main_name, doc.engine).into_bytes());
+    }
+
+    // 4. The bibliography, already processed. TeX writes and reads it in the
+    //    folder it runs in, which is the top of the bundle.
     let bbl = out_dir.join(format!("{}.bbl", doc.name));
     if let Ok(contents) = fs::read(&bbl) {
         if String::from_utf8_lossy(&contents).contains("biblatex") {
@@ -234,6 +245,16 @@ pub fn pack(project: &Project, resolution: &Resolution, req: &PackRequest) -> Re
     let plural = if count == 1 { "" } else { "s" };
     shell::status("Packed", format!("{count} file{plural} ({}) → {}", human_size(size), project.display(&zip_path)));
     Ok(zip_path)
+}
+
+/// arXiv's `00README.json`, naming the top-level file and the compiler.
+fn arxiv_readme(main: &str, engine: Engine) -> String {
+    let spec = serde_json::json!({
+        "spec_version": 1,
+        "process": { "compiler": engine.as_str() },
+        "sources": [{ "filename": main, "usage": "toplevel" }],
+    });
+    format!("{}\n", serde_json::to_string_pretty(&spec).unwrap())
 }
 
 /// Inputs listed in a recorder (`.fls`) file, made absolute, in first-seen order.
@@ -330,12 +351,12 @@ fn included_graphics(source: &str) -> Vec<String> {
     out
 }
 
-fn find_graphic(main_dir: &Path, name: &str) -> Option<PathBuf> {
-    let base = main_dir.join(name);
+fn find_graphic(tex_dir: &Path, name: &str) -> Option<PathBuf> {
+    let base = tex_dir.join(name);
     let candidates = std::iter::once(base.clone())
         .chain(IMAGE_EXTENSIONS.iter().map(|ext| base.with_extension(ext)))
         .chain(IMAGE_EXTENSIONS.iter().map(|ext| PathBuf::from(format!("{}.{ext}", base.display()))));
-    candidates.filter(|p| p.is_file()).find_map(|p| normalize(&p).ok().filter(|p| p.starts_with(main_dir)))
+    candidates.filter(|p| p.is_file()).find_map(|p| normalize(&p).ok().filter(|p| p.starts_with(tex_dir)))
 }
 
 fn walk(dir: &Path) -> Result<Vec<PathBuf>> {
@@ -352,9 +373,9 @@ fn walk(dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(out)
 }
 
-/// Inline `\input{...}` and `\include{...}` of files under the main file's
-/// directory. Paths are relative to the main file's directory, as TeX sees them.
-pub fn flatten(main_dir: &Path, source: &str, inlined: &mut BTreeSet<String>, depth: usize) -> Result<String> {
+/// Inline `\input{...}` and `\include{...}` of files under the folder TeX runs
+/// in (`tex_dir`). Paths are relative to it, as TeX sees them.
+pub fn flatten(tex_dir: &Path, source: &str, inlined: &mut BTreeSet<String>, depth: usize) -> Result<String> {
     if depth > 20 {
         bail!("\\input files are nested more than 20 levels deep (a cycle?)");
     }
@@ -373,7 +394,7 @@ pub fn flatten(main_dir: &Path, source: &str, inlined: &mut BTreeSet<String>, de
             let arg_start = i + pat.len();
             let Some(len) = rest[arg_start..].find('}') else { break };
             let name = rest[arg_start..arg_start + len].trim();
-            let Some((path, dest)) = resolve_input(main_dir, name) else {
+            let Some((path, dest)) = resolve_input(tex_dir, name) else {
                 // Not a project file (e.g. from a package): leave the command alone.
                 out.push_str(&rest[..arg_start + len + 1]);
                 consumed += arg_start + len + 1;
@@ -381,7 +402,7 @@ pub fn flatten(main_dir: &Path, source: &str, inlined: &mut BTreeSet<String>, de
                 continue;
             };
             let content = fs::read_to_string(&path).with_context(|| format!("failed to read `{}`", path.display()))?;
-            let flattened = flatten(main_dir, &content, inlined, depth + 1)?;
+            let flattened = flatten(tex_dir, &content, inlined, depth + 1)?;
             // Drop the file's final newline so no blank line (= paragraph break)
             // appears, unless its last line ends in a comment that would swallow
             // the rest of this line.
@@ -407,11 +428,11 @@ pub fn flatten(main_dir: &Path, source: &str, inlined: &mut BTreeSet<String>, de
     Ok(out)
 }
 
-fn resolve_input(main_dir: &Path, name: &str) -> Option<(PathBuf, String)> {
-    let direct = main_dir.join(name);
-    let path = if direct.is_file() { direct } else { main_dir.join(format!("{name}.tex")) };
+fn resolve_input(tex_dir: &Path, name: &str) -> Option<(PathBuf, String)> {
+    let direct = tex_dir.join(name);
+    let path = if direct.is_file() { direct } else { tex_dir.join(format!("{name}.tex")) };
     let path = normalize(&path).ok()?;
-    let dest = tex_path(path.strip_prefix(main_dir).ok()?);
+    let dest = tex_path(path.strip_prefix(tex_dir).ok()?);
     Some((path, dest))
 }
 
@@ -686,14 +707,14 @@ secret
     #[test]
     fn flattens_inputs_and_includes() {
         let dir = tempfile::tempdir().unwrap();
-        let main_dir = normalize(dir.path()).unwrap();
-        fs::create_dir_all(main_dir.join("ch")).unwrap();
-        fs::write(main_dir.join("ch/one.tex"), "One \\input{ch/two}\n").unwrap();
-        fs::write(main_dir.join("ch/two.tex"), "Two").unwrap();
-        fs::write(main_dir.join("ch/three.tex"), "Three\n").unwrap();
+        let tex_dir = normalize(dir.path()).unwrap();
+        fs::create_dir_all(tex_dir.join("ch")).unwrap();
+        fs::write(tex_dir.join("ch/one.tex"), "One \\input{ch/two}\n").unwrap();
+        fs::write(tex_dir.join("ch/two.tex"), "Two").unwrap();
+        fs::write(tex_dir.join("ch/three.tex"), "Three\n").unwrap();
         let mut inlined = BTreeSet::new();
         let out = flatten(
-            &main_dir,
+            &tex_dir,
             "A\n\\input{ch/one}\n% \\input{ch/two}\n\\include{ch/three}\n\\input{tikzlibrary}\n",
             &mut inlined,
             0,

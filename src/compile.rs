@@ -3,7 +3,7 @@
 
 use std::fs;
 use std::io::{self, ErrorKind};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Instant, SystemTime};
 
@@ -11,7 +11,7 @@ use anyhow::{Context, Result, anyhow, bail};
 
 use crate::diagnostics::{self, Reporter};
 use crate::filelock;
-use crate::manifest::{Engine, Profile};
+use crate::manifest::{Document, Engine, Profile};
 use crate::preamble;
 use crate::project::{Project, tex_path};
 use crate::resolve::{Resolution, Source};
@@ -30,12 +30,8 @@ pub fn build(project: &Project, resolution: &Resolution, req: &BuildRequest) -> 
     })?;
     let profile = project.manifest.profile(&req.profile)?;
 
-    let main = project.root.join(&doc.main);
-    if !main.is_file() {
-        bail!("main file `{}` does not exist (set `document.main` in quire.toml)", project.display(&main));
-    }
-    let main_dir = main.parent().unwrap();
-    let main_file = main.file_name().unwrap().to_string_lossy().to_string();
+    let Layout { main, tex_dir, main_rel: main_file } = layout(project, doc)?;
+    let tex_dir = tex_dir.as_path();
 
     let out_dir = project.target_dir().join(&profile.name);
     // Two builds of the same profile would overwrite each other's aux files.
@@ -45,7 +41,7 @@ pub fn build(project: &Project, resolution: &Resolution, req: &BuildRequest) -> 
 
     let source = fs::read_to_string(&main).with_context(|| format!("failed to read `{}`", main.display()))?;
     let driver = out_dir.join("quire-driver.tex");
-    let search_env = resolution.search_env(main_dir);
+    let search_env = resolution.search_env(tex_dir);
     let fingerprint: Vec<String> =
         search_env.iter().map(|(var, value)| format!("{var}={}", value.to_string_lossy())).collect();
     write_if_changed(&driver, &driver_source(&profile, &main_file, &source, &fingerprint))?;
@@ -57,7 +53,7 @@ pub fn build(project: &Project, resolution: &Resolution, req: &BuildRequest) -> 
         preamble::prepare(&preamble::Inputs {
             name: &doc.name,
             root: &project.root,
-            main_dir,
+            tex_dir,
             out_dir: &out_dir,
             prelude: &profile_prelude(&profile, &main_file, &source),
             source: &source,
@@ -80,7 +76,7 @@ pub fn build(project: &Project, resolution: &Resolution, req: &BuildRequest) -> 
 
     let latexmk = |format: Option<&preamble::Format>, force: bool| {
         let mut cmd = Command::new("latexmk");
-        cmd.current_dir(main_dir)
+        cmd.current_dir(tex_dir)
             .arg(doc.engine.latexmk_flag())
             .args(["-interaction=nonstopmode", "-halt-on-error", "-file-line-error"])
             .arg(format!("-outdir={}", tex_path(&out_dir)))
@@ -124,7 +120,7 @@ pub fn build(project: &Project, resolution: &Resolution, req: &BuildRequest) -> 
     let mut output = attempt(format.as_ref(), force)?;
     let log_path = out_dir.join(format!("{}.log", doc.name));
     if !output.status.success()
-        && !error_is_in_body(&log_path, attempt_started, main_dir, &main, &source)
+        && !error_is_in_body(&log_path, attempt_started, tex_dir, &main, &source)
         && let Some(f) = format.take()
     {
         // Some preambles cannot run from a format. If the document builds the
@@ -142,7 +138,7 @@ pub fn build(project: &Project, resolution: &Resolution, req: &BuildRequest) -> 
 
     if !output.status.success() {
         let mut errors = log.as_deref().map(diagnostics::parse_errors).unwrap_or_default();
-        errors.iter_mut().for_each(|e| e.resolve_file(main_dir));
+        errors.iter_mut().for_each(|e| e.resolve_file(tex_dir));
         if errors.is_empty() && !req.verbose && !reporter.is_json() {
             let text =
                 format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
@@ -190,6 +186,39 @@ pub fn build(project: &Project, resolution: &Resolution, req: &BuildRequest) -> 
     Ok(BuildOutput { pdf, recorder_files })
 }
 
+/// Where TeX runs, and the main file as TeX sees it from there.
+pub struct Layout {
+    /// The main file.
+    pub main: PathBuf,
+    /// The folder TeX runs in: `document.root`, or the main file's folder.
+    pub tex_dir: PathBuf,
+    /// The main file relative to `tex_dir`, with forward slashes.
+    pub main_rel: String,
+}
+
+pub fn layout(project: &Project, doc: &Document) -> Result<Layout> {
+    let main = project.root.join(&doc.main);
+    if !main.is_file() {
+        bail!("main file `{}` does not exist (set `document.main` in quire.toml)", project.display(&main));
+    }
+    let tex_dir = match &doc.root {
+        // Validated to be plain folder names (and `.`), so dropping `.` keeps
+        // paths comparable with the main file's.
+        Some(root) => {
+            project.root.join(root.components().filter(|c| matches!(c, Component::Normal(_))).collect::<PathBuf>())
+        }
+        None => main.parent().unwrap().to_path_buf(),
+    };
+    if !tex_dir.is_dir() {
+        bail!("`document.root` folder `{}` does not exist", project.display(&tex_dir));
+    }
+    let Ok(relative) = main.strip_prefix(&tex_dir) else {
+        bail!("main file `{}` is not inside `document.root` (`{}`)", project.display(&main), project.display(&tex_dir));
+    };
+    let main_rel = tex_path(relative);
+    Ok(Layout { main, tex_dir, main_rel })
+}
+
 pub struct BuildOutput {
     pub pdf: PathBuf,
     /// TeX recorder (`.fls`) files listing every file the build read.
@@ -223,7 +252,7 @@ const CACHE_ONLY_ERRORS: &[&str] = &["Unknown color stack number"];
 ///
 /// Only a log written by this attempt counts: if TeX never started, the log
 /// on disk is from an earlier build and says nothing about this one.
-fn error_is_in_body(log_path: &Path, since: SystemTime, main_dir: &Path, main: &Path, source: &str) -> bool {
+fn error_is_in_body(log_path: &Path, since: SystemTime, tex_dir: &Path, main: &Path, source: &str) -> bool {
     let fresh = fs::metadata(log_path).and_then(|m| m.modified()).is_ok_and(|t| t >= since);
     if !fresh {
         return false;
@@ -235,7 +264,7 @@ fn error_is_in_body(log_path: &Path, since: SystemTime, main_dir: &Path, main: &
     if CACHE_ONLY_ERRORS.iter().any(|e| error.message.contains(e)) {
         return false;
     }
-    error.resolve_file(main_dir);
+    error.resolve_file(tex_dir);
     let (Some(file), Some(line)) = (error.file, error.line) else { return false };
     if file != tex_path(main) {
         return true;
@@ -260,7 +289,8 @@ fn write_if_changed(path: &Path, contents: &str) -> Result<()> {
 }
 
 /// The file latexmk actually compiles. It sets up the profile, then `\input`s
-/// the real main file (latexmk runs in the main file's directory).
+/// the real main file (latexmk runs in `document.root`, by default the main
+/// file's directory).
 ///
 /// The search-path environment is written as comments (`fingerprint`), so any
 /// change to the resolved dependencies changes this file. latexmk does not

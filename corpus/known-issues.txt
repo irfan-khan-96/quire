@@ -1,6 +1,2 @@
 # Corpus papers that quire is known to fail on, so the nightly run stays green
 # until they are fixed. Format: <arxiv id> <reason or issue link>
-
-# The main file is in a subfolder, but its \includegraphics paths are relative
-# to the top folder, where arXiv compiles. quire compiles in the main file's folder.
-2501.02609v3 main file in a subfolder with paths relative to the project root

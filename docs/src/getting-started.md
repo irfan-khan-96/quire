@@ -40,7 +40,8 @@ note: using existing `thesis.tex` as the main file
 ```
 
 When there are several documents, `init` follows arXiv's `00README.json` if
-there is one. Otherwise it skips standalone figures and files the others
+there is one; if that names a file in a subfolder, `init` also sets `root = "."`
+so paths resolve from the top folder, as on arXiv. Otherwise it skips standalone figures and files the others
 `\input`, prefers names like `main.tex`, `paper.tex` or `ms.tex`, and then
 picks the largest. It lists the other candidates, so you can change `main` in
 `quire.toml` if it guessed wrong. It also picks the engine: xelatex for
