@@ -50,7 +50,8 @@ pub struct Inputs<'a> {
     /// Job name, which is also the format's name.
     pub name: &'a str,
     pub root: &'a Path,
-    pub main_dir: &'a Path,
+    /// The folder TeX runs in.
+    pub tex_dir: &'a Path,
     pub out_dir: &'a Path,
     /// TeX that applies the profile (baked into the format).
     pub prelude: &'a str,
@@ -93,7 +94,7 @@ pub fn prepare(inputs: &Inputs) -> Option<Format> {
     let dump_file = dir.join(DUMP_FILE);
     fs::write(&dump_file, &dump_text).ok()?;
     let mut cmd = Command::new("pdflatex");
-    cmd.current_dir(inputs.main_dir)
+    cmd.current_dir(inputs.tex_dir)
         .args(["-ini", "-recorder", "-interaction=nonstopmode", "-halt-on-error"])
         .arg(format!("-jobname={}", inputs.name))
         .arg(format!("-output-directory={}", tex_path(&dir)))
@@ -179,10 +180,10 @@ fn locate(name: &str, relative_fmt: &str, dir: &Path) -> (String, Vec<(&'static 
     (name.to_string(), vec![("TEXFORMATS", OsString::from(value))])
 }
 
-/// `-fmt=` value relative to the main file's directory. kpathsea only treats a
+/// `-fmt=` value relative to the folder TeX runs in. kpathsea only treats a
 /// name as a path when it starts with `./` or `../`.
 fn fmt_arg(inputs: &Inputs) -> Option<String> {
-    let up = inputs.main_dir.strip_prefix(inputs.root).ok()?;
+    let up = inputs.tex_dir.strip_prefix(inputs.root).ok()?;
     if up.components().any(|c| !matches!(c, Component::Normal(_))) {
         return None;
     }
@@ -243,10 +244,10 @@ mod tests {
     #[test]
     fn fmt_path_is_explicitly_relative() {
         let env = [];
-        let mk = |main_dir: &'static str| Inputs {
+        let mk = |tex_dir: &'static str| Inputs {
             name: "paper",
             root: Path::new("/p"),
-            main_dir: Path::new(main_dir),
+            tex_dir: Path::new(tex_dir),
             out_dir: Path::new("/p/target/dev"),
             prelude: "",
             source: "",

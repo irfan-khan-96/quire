@@ -16,8 +16,9 @@ unpacked bundle, `target/arxiv/paper/`, if you want to look inside first.
 quire builds the document, then takes exactly the files TeX read, from TeX's
 own record of the build:
 
-- **Your files** keep their paths relative to the main file.
-- **Files from path and git dependencies** are copied next to the main file,
+- **Your files** keep their paths relative to the main file (or to `root`, if
+  set).
+- **Files from path and git dependencies** are copied to the top of the bundle,
   because arXiv can't fetch them. Their comments are kept, since they often hold
   license text.
 - **Files from the TeX distribution** are left out, because arXiv has its own.
@@ -65,5 +66,11 @@ strip-comments = true     # default
 include = ["src/data"]    # extra files the build record doesn't show, e.g. data read by a package
 ```
 
-`include` paths are relative to the project root and must be inside the main
-file's directory, because arXiv resolves paths from there.
+`include` paths are relative to the project root and must be inside the folder
+TeX runs in (the main file's folder, or `root` in `[document]`), because arXiv
+resolves paths from the top of the bundle.
+
+That folder becomes the top of the bundle. When `root` puts the main file in a
+subfolder of it, the bundle keeps that layout and gets a `00README.json` naming
+the main file as the top-level file, so arXiv compiles it from the top folder
+just as quire did. See [`root`](reference/manifest.md#document).

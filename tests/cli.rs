@@ -267,15 +267,15 @@ Hi
     assert_eq!(messages.last().unwrap()["success"], true);
 }
 
-/// Names and contents of the files in a zip.
+/// Names and contents (as text) of the files in a zip.
 fn zip_entries(path: &Path) -> std::collections::BTreeMap<String, String> {
     let mut archive = zip::ZipArchive::new(fs::File::open(path).unwrap()).unwrap();
     (0..archive.len())
         .map(|i| {
             let mut file = archive.by_index(i).unwrap();
-            let mut text = String::new();
-            std::io::Read::read_to_string(&mut file, &mut text).unwrap();
-            (file.name().unwrap().to_string(), text)
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut file, &mut bytes).unwrap();
+            (file.name().unwrap().to_string(), String::from_utf8_lossy(&bytes).into_owned())
         })
         .collect()
 }
@@ -386,4 +386,77 @@ fn pack_refuses_shell_escape() {
     let out = quire(&doc, tmp.path(), &["pack"]);
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("shell-escape"));
+}
+
+/// A 1x1 PNG.
+const PNG: &[u8] = &[
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 4, 0, 0, 0, 181, 28, 12,
+    2, 0, 0, 0, 11, 73, 68, 65, 84, 120, 218, 99, 100, 96, 0, 0, 0, 6, 0, 2, 48, 129, 208, 47, 0, 0, 0, 0, 73, 69, 78,
+    68, 174, 66, 96, 130,
+];
+
+/// An arXiv-style paper whose main file is in a subfolder while its paths are
+/// relative to the top folder, where arXiv compiles.
+fn subfolder_project(tmp: &Path) -> std::path::PathBuf {
+    let doc = tmp.join("paper");
+    for dir in ["EJ/sections", "figs", "bib"] {
+        fs::create_dir_all(doc.join(dir)).unwrap();
+    }
+    fs::write(doc.join("quire.toml"), "[document]\nname = \"paper\"\nmain = \"EJ/paper.tex\"\nroot = \".\"\n").unwrap();
+    fs::write(
+        doc.join("EJ/paper.tex"),
+        r"\documentclass{article}
+\usepackage{graphicx}
+\begin{document}
+\input{EJ/sections/intro}
+\includegraphics{figs/dot}
+\bibliographystyle{plain}
+\bibliography{bib/refs}
+\end{document}
+",
+    )
+    .unwrap();
+    fs::write(doc.join("EJ/sections/intro.tex"), "Intro text, see \\cite{knuth}.\n").unwrap();
+    fs::write(doc.join("figs/dot.png"), PNG).unwrap();
+    fs::write(doc.join("bib/refs.bib"), "@book{knuth, author={D. Knuth}, title={The TeXbook}, year={1984}}\n").unwrap();
+    doc
+}
+
+#[test]
+fn builds_and_packs_a_main_file_in_a_subfolder() {
+    if !has("latexmk") {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let doc = subfolder_project(tmp.path());
+    let out = ok(&quire(&doc, tmp.path(), &["build"]));
+    assert!(!out.contains("undefined citations"), "{out}");
+    assert!(doc.join("target/dev/paper.pdf").is_file());
+
+    // Packing builds the release profile, then compiles the bundle on its own
+    // from its top folder, as arXiv does.
+    ok(&quire(&doc, tmp.path(), &["pack"]));
+    let entries = zip_entries(&doc.join("target/arxiv/paper-arxiv.zip"));
+    let names: Vec<&str> = entries.keys().map(String::as_str).collect();
+    assert_eq!(names, vec!["00README.json", "EJ/paper.tex", "EJ/sections/intro.tex", "figs/dot.png", "paper.bbl"]);
+    let readme: serde_json::Value = serde_json::from_str(&entries["00README.json"]).unwrap();
+    assert_eq!(readme["sources"][0]["filename"], "EJ/paper.tex");
+    assert_eq!(readme["sources"][0]["usage"], "toplevel");
+    assert!(entries["paper.bbl"].contains("TeXbook"));
+
+    // Without `root`, TeX runs in `EJ/` and cannot find the files.
+    fs::write(doc.join("quire.toml"), "[document]\nname = \"paper\"\nmain = \"EJ/paper.tex\"\n").unwrap();
+    assert!(!quire(&doc, tmp.path(), &["build"]).status.success());
+}
+
+#[test]
+fn init_compiles_from_the_top_folder_when_the_arxiv_readme_says_so() {
+    let tmp = TempDir::new().unwrap();
+    let doc = subfolder_project(tmp.path());
+    fs::remove_file(doc.join("quire.toml")).unwrap();
+    fs::write(doc.join("00README.json"), r#"{"sources":[{"filename":"EJ/paper.tex","usage":"toplevel"}]}"#).unwrap();
+    ok(&quire(&doc, tmp.path(), &["init", "--vcs", "none"]));
+    let manifest = fs::read_to_string(doc.join("quire.toml")).unwrap();
+    assert!(manifest.contains("main = \"EJ/paper.tex\""), "{manifest}");
+    assert!(manifest.contains("root = \".\""), "{manifest}");
 }

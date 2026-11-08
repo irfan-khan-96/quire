@@ -285,12 +285,12 @@ impl Resolution {
 
     /// Environment variables pointing TeX, BibTeX and Biber at the dependencies.
     ///
-    /// BibTeX and Biber run in the output directory, so `.` is not the main
-    /// file's directory for them: it is added explicitly so `.bib`/`.bst` files
+    /// BibTeX and Biber run in the output directory, so `.` is not the folder
+    /// TeX runs in (`tex_dir`): it is added explicitly so `.bib`/`.bst` files
     /// next to the document are found.
-    pub fn search_env(&self, main_dir: &Path) -> Vec<(&'static str, OsString)> {
+    pub fn search_env(&self, tex_dir: &Path) -> Vec<(&'static str, OsString)> {
         let dirs = self.search_dirs();
-        let mut bib_dirs = vec![main_dir.to_path_buf()];
+        let mut bib_dirs = vec![tex_dir.to_path_buf()];
         bib_dirs.extend(dirs.iter().cloned());
         let mut env_vars = Vec::new();
         for (var, dirs) in [("TEXINPUTS", &dirs), ("BIBINPUTS", &bib_dirs), ("BSTINPUTS", &bib_dirs)] {

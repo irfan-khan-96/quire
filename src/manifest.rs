@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -36,6 +36,10 @@ pub struct Document {
     pub name: String,
     #[serde(default = "default_main")]
     pub main: PathBuf,
+    /// The folder TeX runs in, relative to `quire.toml`. Paths in the document
+    /// (`\input`, `\includegraphics`, `\bibliography`) are relative to it.
+    /// Default: the main file's folder.
+    pub root: Option<PathBuf>,
     #[serde(default)]
     pub engine: Engine,
     /// TeX Live release to target. Recorded now, enforced once quire manages
@@ -293,6 +297,14 @@ impl Manifest {
         }
         if let Some(doc) = &self.document {
             validate_name(&doc.name).context("invalid `document.name`")?;
+            if let Some(root) = &doc.root
+                && root.components().any(|c| !matches!(c, Component::Normal(_) | Component::CurDir))
+            {
+                bail!(
+                    "`document.root` must be a folder inside the project, relative to quire.toml (got `{}`)",
+                    root.display()
+                );
+            }
         }
         if let Some(pkg) = &self.package {
             validate_name(&pkg.name).context("invalid `package.name`")?;
@@ -437,6 +449,8 @@ mod tests {
         assert!(err(&format!("{base}a = {{ path = \"p\", tag = \"t\" }}")).contains("only apply"));
         assert!(err(&format!("{base}a = {{ paht = \"p\" }}")).contains("unknown key `paht`"));
         assert!(err("[build]\nshell-escape = true").contains("[document]"));
+        assert!(err("[document]\nname = \"x\"\nroot = \"../up\"").contains("document.root"));
+        assert!(Manifest::parse("[document]\nname = \"x\"\nroot = \".\"").is_ok());
     }
 
     #[test]
