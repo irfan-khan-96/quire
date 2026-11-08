@@ -1,0 +1,10 @@
+[document]
+name = "paper"
+main = "src/main.tex"
+engine = "pdflatex"
+
+[dependencies]
+lab-style = { path = "../lab-style" }
+
+[profile.draft]
+class-options = ["draft"]

@@ -18,18 +18,42 @@ LaTeX projects don't say which packages they need, where those packages come fro
 or how to build them. quire adds one manifest (`quire.toml`), a lockfile
 (`quire.lock`), and one command for the whole workflow.
 
-## Requirements
-
-- TeX Live or MiKTeX (provides `latexmk`, the engines, and `kpsewhich`); latexmk needs Perl.
-- `git`, for git dependencies.
-
-Run `quire doctor` to check your setup.
+**[Read the quire book](https://irfan-khan-96.github.io/quire/)** for a guide,
+migration notes for latexmk and Overleaf users, and the full reference.
 
 ## Install
 
-```bash
-cargo install --path .
+quire needs TeX Live or MiKTeX, which provide `latexmk`, the engines and
+`kpsewhich` (latexmk also needs Perl), plus `git` for git dependencies.
+
+**Linux and macOS:**
+
+```sh
+curl -fsSL https://github.com/irfan-khan-96/quire/releases/latest/download/install.sh | sh
 ```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://github.com/irfan-khan-96/quire/releases/latest/download/install.ps1 | iex
+```
+
+The scripts download the build for your platform from the latest
+[release](https://github.com/irfan-khan-96/quire/releases) and verify its
+SHA-256 checksum. You can also build from source (Rust 1.89+):
+`cargo install --git https://github.com/irfan-khan-96/quire --locked`.
+
+Run `quire doctor` to check your setup.
+
+## In GitHub Actions
+
+```yaml
+- uses: actions/checkout@v4
+- uses: irfan-khan-96/quire@v0.1.0   # installs TeX Live and quire, builds, uploads the PDF
+```
+
+See [Continuous integration](https://irfan-khan-96.github.io/quire/ci.html)
+for packing for arXiv and attaching PDFs to releases.
 
 ## Commands
 
@@ -267,9 +291,30 @@ version. Use `--no-verify` to skip it.
 
 ```bash
 cargo test
+mdbook serve docs          # the book, at http://localhost:3000
+python bench/bench.py      # benchmark against latexmk
 ```
+
+To release, bump `version` in `Cargo.toml`, commit, and push a matching tag
+(`git tag v0.2.0 && git push origin v0.2.0`). The release workflow builds Linux
+(x86_64 and ARM64, static musl), macOS (Apple Silicon and Intel) and Windows
+binaries, and publishes them with checksums and the install scripts. The book
+is published to GitHub Pages from `docs/` on every push to `main`.
 
 The integration tests in `tests/cli.rs` skip the git and latexmk cases when those
 tools are not installed. CI (`.github/workflows/ci.yml`) runs `cargo fmt --check`
 and `clippy -D warnings`. It runs the tests on Linux (with TeX Live, so every
 test runs) and on macOS and Windows (where the LaTeX build tests skip).
+
+## License
+
+quire is licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT License ([LICENSE-MIT](LICENSE-MIT))
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in quire by you, as defined in the Apache-2.0 license, shall be
+dual licensed as above, without any additional terms or conditions.

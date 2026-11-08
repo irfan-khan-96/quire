@@ -2,6 +2,19 @@
 name = "quire"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.89"
+description = "A Cargo-like build tool and package manager for LaTeX"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/irfan-khan-96/quire"
+homepage = "https://irfan-khan-96.github.io/quire/"
+readme = "README.md"
+keywords = ["latex", "tex", "build-tool", "package-manager", "arxiv"]
+categories = ["command-line-utilities", "development-tools::build-utils"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
 
 [dependencies]
 anstream = "1.0.0"

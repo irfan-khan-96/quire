@@ -48,3 +48,40 @@ jobs:
         env:
           # Where TeX is installed, tests that need it must run, not skip.
           QUIRE_REQUIRE_TEX: ${{ matrix.tex && '1' || '' }}
+
+  action:
+    name: GitHub Action on the example project
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the PDF
+        id: build
+        uses: ./
+        with:
+          version: source
+          working-directory: examples/paper
+          artifact-name: example-pdf
+      - name: Pack for arXiv
+        id: pack
+        uses: ./
+        with:
+          version: source
+          command: pack
+          tex: none
+          working-directory: examples/paper
+          artifact-name: example-arxiv
+      - name: Check the outputs
+        run: |
+          ls -l ${{ steps.build.outputs.path }} ${{ steps.pack.outputs.path }}
+          unzip -l ${{ steps.pack.outputs.path }} | grep -q lab-style.sty
+
+  docs:
+    name: Build the book
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook
+      - run: mdbook build docs
