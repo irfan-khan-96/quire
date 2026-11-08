@@ -175,7 +175,7 @@ impl Reporter {
     }
 
     fn emit(self, value: Value) {
-        println!("{value}");
+        shell::outln!("{value}");
     }
 
     pub fn diagnostic(self, document: &str, profile: &str, diagnostic: &Diagnostic) {

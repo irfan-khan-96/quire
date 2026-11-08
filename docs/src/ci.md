@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: irfan-khan-96/quire@v0.1.0
+      - uses: irfan-khan-96/quire@v0.1.1
 ```
 
 The PDF appears under the run's **Artifacts** as `quire-output`.
@@ -25,7 +25,7 @@ always uses the dependency revisions you committed.
 ### Pack for arXiv as well
 
 ```yaml
-      - uses: irfan-khan-96/quire@v0.1.0
+      - uses: irfan-khan-96/quire@v0.1.1
         with:
           command: pack
           artifact-name: arxiv-bundle
@@ -61,7 +61,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: quire
-        uses: irfan-khan-96/quire@v0.1.0
+        uses: irfan-khan-96/quire@v0.1.1
         with:
           args: --release
       - run: gh release create "$GITHUB_REF_NAME" ${{ steps.quire.outputs.path }}

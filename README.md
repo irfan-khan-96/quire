@@ -49,7 +49,7 @@ Run `quire doctor` to check your setup.
 
 ```yaml
 - uses: actions/checkout@v4
-- uses: irfan-khan-96/quire@v0.1.0   # installs TeX Live and quire, builds, uploads the PDF
+- uses: irfan-khan-96/quire@v0.1.1   # installs TeX Live and quire, builds, uploads the PDF
 ```
 
 See [Continuous integration](https://irfan-khan-96.github.io/quire/ci.html)
