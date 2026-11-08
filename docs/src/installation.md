@@ -39,13 +39,29 @@ Release and check its SHA-256 checksum before installing.
 To install a specific version, set `QUIRE_VERSION=v0.1.0`. To install somewhere
 else, set `QUIRE_INSTALL_DIR`.
 
-You can also download an archive from the
-[Releases page](https://github.com/irfan-khan-96/quire/releases) yourself, or
-build from source with Rust 1.89 or newer:
+**Homebrew** (macOS and Linux):
 
 ```sh
-cargo install --git https://github.com/irfan-khan-96/quire --locked
+brew install irfan-khan-96/tap/quire
 ```
+
+**Scoop** (Windows):
+
+```powershell
+scoop bucket add quire https://github.com/irfan-khan-96/scoop-bucket
+scoop install quire
+```
+
+**From source** with Rust 1.89 or newer. The crate is called `quire-tex`,
+because `quire` on crates.io is an unrelated library; the command it installs
+is `quire`:
+
+```sh
+cargo install quire-tex --locked
+```
+
+You can also download an archive from the
+[Releases page](https://github.com/irfan-khan-96/quire/releases) yourself.
 
 ## 3. Check the setup
 

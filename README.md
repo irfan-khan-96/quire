@@ -40,8 +40,16 @@ irm https://github.com/irfan-khan-96/quire/releases/latest/download/install.ps1 
 
 The scripts download the build for your platform from the latest
 [release](https://github.com/irfan-khan-96/quire/releases) and verify its
-SHA-256 checksum. You can also build from source (Rust 1.89+):
-`cargo install --git https://github.com/irfan-khan-96/quire --locked`.
+SHA-256 checksum.
+
+**Package managers:**
+
+```sh
+brew install irfan-khan-96/tap/quire                  # Homebrew (macOS, Linux)
+scoop bucket add quire https://github.com/irfan-khan-96/scoop-bucket
+scoop install quire                                   # Scoop (Windows)
+cargo install quire-tex --locked                      # from source, Rust 1.89+
+```
 
 Run `quire doctor` to check your setup.
 

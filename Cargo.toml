@@ -1,5 +1,6 @@
 [package]
-name = "quire"
+# `quire` on crates.io is an unrelated crate; the command is still `quire`.
+name = "quire-tex"
 version = "0.1.1"
 edition = "2024"
 rust-version = "1.89"
@@ -10,6 +11,11 @@ homepage = "https://irfan-khan-96.github.io/quire/"
 readme = "README.md"
 keywords = ["latex", "tex", "build-tool", "package-manager", "arxiv"]
 categories = ["command-line-utilities", "development-tools::build-utils"]
+include = ["/src", "/tests", "/README.md", "/LICENSE-MIT", "/LICENSE-APACHE", "/Cargo.lock"]
+
+[[bin]]
+name = "quire"
+path = "src/main.rs"
 
 [profile.release]
 lto = true
