@@ -67,7 +67,10 @@ pub fn prepare(inputs: &Inputs) -> Option<Format> {
     }
     let split = split_point(inputs.source)?;
     let relative_fmt = fmt_arg(inputs)?;
-    let dump_text = format!("{}{}\n\\begin{{document}}\n", inputs.prelude, &inputs.source[..split]);
+    // mylatexformat.ltx ends with `\makeatletter` in force. Undo it, or `@`
+    // names in the preamble would work from the cache but nowhere else
+    // (including on arXiv).
+    let dump_text = format!("\\makeatother\n{}{}\n\\begin{{document}}\n", inputs.prelude, &inputs.source[..split]);
     let dir = inputs.out_dir.join("preamble");
     let recorder = dir.join(format!("{}.fls", inputs.name));
     let fmt = dir.join(format!("{}.fmt", inputs.name));
@@ -191,7 +194,7 @@ fn fmt_arg(inputs: &Inputs) -> Option<String> {
 
 fn cache_key(dump_text: &str, env: &[(&'static str, OsString)], recorder: &Path, dir: &Path) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(b"quire-preamble-v1\n");
+    hasher.update(b"quire-preamble-v2\n");
     hasher.update(dump_text.as_bytes());
     for (var, value) in env {
         hasher.update(format!("\n{var}={}", value.to_string_lossy()).as_bytes());

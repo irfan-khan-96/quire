@@ -59,7 +59,7 @@ for packing for arXiv and attaching PDFs to releases.
 
 | Command | What it does |
 |---|---|
-| `quire new <dir>` / `quire init` | Create a project (`--template article\|report\|beamer\|package`, `--engine`). `init` adopts an existing `.tex` file with a `\documentclass`. |
+| `quire new <dir>` / `quire init` | Create a project (`--template article\|report\|beamer\|package`, `--engine`). `init` adopts an existing document and detects its engine. |
 | `quire build` | Compile to `target/<profile>/<name>.pdf`. `--profile <p>`, `--release`, `--open`, `-v` for full latexmk output. |
 | `quire watch` | Rebuild on changes to the project or any path dependency. |
 | `quire add <name>` | Add a dependency: `--path <dir>`, `--git <url> [--tag\|--branch\|--rev]`, or a TeX distribution package (`--version`). |

@@ -117,6 +117,37 @@ fn errors_in_the_body_are_reported_from_the_cached_build() {
 }
 
 #[test]
+fn cached_preamble_sees_normal_catcodes() {
+    if !available() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let doc = project(tmp.path(), "Hi.");
+    // mylatexformat leaves `@` a letter; a preamble must not see that, or code
+    // that only works with the cache would fail on arXiv.
+    write_main(
+        &doc,
+        "\\documentclass{article}\n\\edef\\atcat{\\the\\catcode`\\@}\n",
+        "\\ifnum\\atcat=11 \\errmessage{@ was a letter in the preamble}\\fi Hi.",
+    );
+    ok(&quire(&doc, tmp.path(), &["build"]));
+    assert!(loaded_format(&doc).starts_with("paper"));
+}
+
+#[test]
+fn color_stacks_lost_by_the_format_fall_back() {
+    if !available() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let doc = project(tmp.path(), "Hi.");
+    // `transparent` creates a pdfTeX color stack, which a format does not keep.
+    write_main(&doc, "\\documentclass{article}\n\\usepackage{transparent}\n", "{\\transparent{0.5}Faded} text.");
+    ok(&quire(&doc, tmp.path(), &["build"]));
+    assert!(doc.join("target/dev/paper.pdf").is_file());
+}
+
+#[test]
 fn uncacheable_preambles_fall_back_and_are_remembered() {
     if !available() {
         return;

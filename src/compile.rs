@@ -211,6 +211,11 @@ fn run(cmd: &mut Command, req: &BuildRequest) -> Result<Output> {
     })
 }
 
+/// Errors that only a cached preamble causes, wherever they are reported. A
+/// format does not keep the pdfTeX color stacks the preamble created (e.g. by
+/// `transparent`), so their first use in the body fails.
+const CACHE_ONLY_ERRORS: &[&str] = &["Unknown color stack number"];
+
 /// Whether the first error in the log is clearly the document's own: after
 /// the cached preamble in the main file, or in another file. Such an error
 /// cannot be caused by the preamble cache, so there is no point retrying
@@ -227,13 +232,18 @@ fn error_is_in_body(log_path: &Path, since: SystemTime, main_dir: &Path, main: &
     let Some(mut error) = diagnostics::parse_errors(&String::from_utf8_lossy(&log)).into_iter().next() else {
         return false;
     };
+    if CACHE_ONLY_ERRORS.iter().any(|e| error.message.contains(e)) {
+        return false;
+    }
     error.resolve_file(main_dir);
     let (Some(file), Some(line)) = (error.file, error.line) else { return false };
     if file != tex_path(main) {
         return true;
     }
+    // `\begin{document}` itself runs the preamble's `\AtBeginDocument` hooks,
+    // so an error on that line may well come from the cache.
     let preamble_lines = preamble::split_point(source).map(|i| source[..i].lines().count()).unwrap_or(0);
-    line as usize > preamble_lines
+    line as usize > preamble_lines + 1
 }
 
 /// latexmk failed only because a tool failed in an earlier run.
@@ -383,6 +393,26 @@ fn check_distribution_deps(resolution: &Resolution) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn errors_at_begin_document_may_come_from_the_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("main.tex");
+        let source = "\\documentclass{article}\n\\usepackage{x}\n\\begin{document}\nHi.\n\\end{document}\n";
+        let log = dir.path().join("main.log");
+        let since = SystemTime::now() - std::time::Duration::from_secs(5);
+        let in_body = |line: usize| {
+            fs::write(&log, format!("./main.tex:{line}: Extra \\fi.\nl.{line} x\n")).unwrap();
+            error_is_in_body(&log, since, dir.path(), &main, source)
+        };
+        assert!(!in_body(2));
+        assert!(!in_body(3), "the \\begin{{document}} line runs preamble hooks");
+        assert!(in_body(4));
+
+        // Lost color stacks are the cache's fault, even when reported from another file.
+        fs::write(&log, "./fig.pdf_tex:57: Unknown color stack number 1.\nl.57 x\n").unwrap();
+        assert!(!error_is_in_body(&log, since, dir.path(), &main, source));
+    }
 
     fn profile(class_options: &[&str]) -> Profile {
         Profile {

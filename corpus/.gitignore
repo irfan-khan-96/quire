@@ -1,0 +1,5 @@
+/cache/
+/work/
+/results.json
+/summary.md
+__pycache__/

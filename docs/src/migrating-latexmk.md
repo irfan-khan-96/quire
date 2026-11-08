@@ -5,9 +5,10 @@ preamble cache, clearer errors and arXiv packing.
 
 ## Step by step
 
-1. Run `quire init` in the project folder. It finds the `.tex` file with
-   `\documentclass` and writes `quire.toml` pointing at it.
-2. Set the engine in `quire.toml`, if it isn't pdflatex:
+1. Run `quire init` in the project folder. It finds the main `.tex` file and
+   writes `quire.toml` pointing at it.
+2. Check the engine in `quire.toml`. `init` picks xelatex or lualatex when the
+   packages you load need them, and pdflatex otherwise:
 
    ```toml
    [document]
