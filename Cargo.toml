@@ -1,6 +1,6 @@
 [package]
 name = "quire"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.89"
 description = "A Cargo-like build tool and package manager for LaTeX"

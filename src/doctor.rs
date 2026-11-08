@@ -5,6 +5,7 @@ use std::process::Command;
 use anstyle::{AnsiColor, Style};
 
 use crate::project::quire_home;
+use crate::shell;
 
 const OK: Style = AnsiColor::Green.on_default().bold();
 const MISSING: Style = AnsiColor::Red.on_default().bold();
@@ -37,14 +38,14 @@ pub fn doctor() -> bool {
             Ok(out) => {
                 let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
                 let version = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("").to_string();
-                anstream::println!("  {OK}ok{OK:#}       {:<13} {version}", tool.program);
+                shell::outln!("  {OK}ok{OK:#}       {:<13} {version}", tool.program);
             }
             Err(_) if tool.required => {
                 healthy = false;
-                anstream::println!("  {MISSING}missing{MISSING:#}  {:<13} {}", tool.program, tool.purpose);
+                shell::outln!("  {MISSING}missing{MISSING:#}  {:<13} {}", tool.program, tool.purpose);
             }
             Err(_) => {
-                anstream::println!("  {OPTIONAL}missing{OPTIONAL:#}  {:<13} optional: {}", tool.program, tool.purpose);
+                shell::outln!("  {OPTIONAL}missing{OPTIONAL:#}  {:<13} optional: {}", tool.program, tool.purpose);
             }
         }
     }
@@ -56,17 +57,17 @@ pub fn doctor() -> bool {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|p| !p.is_empty());
     match mylatexformat {
-        Some(path) => anstream::println!("  {OK}ok{OK:#}       {:<13} {path}", "mylatexformat"),
-        None => anstream::println!(
+        Some(path) => shell::outln!("  {OK}ok{OK:#}       {:<13} {path}", "mylatexformat"),
+        None => shell::outln!(
             "  {OPTIONAL}missing{OPTIONAL:#}  {:<13} optional: preamble caching (faster pdflatex rebuilds)",
             "mylatexformat"
         ),
     }
     if let Ok(home) = quire_home() {
-        println!("\n  quire home: {}", home.display());
+        shell::outln!("\n  quire home: {}", home.display());
     }
     if !healthy {
-        println!(
+        shell::outln!(
             "\n  Install TeX Live (https://tug.org/texlive/) or MiKTeX (https://miktex.org/), which include latexmk."
         );
     }
