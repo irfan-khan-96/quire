@@ -1,0 +1,5 @@
+[package]
+name = "lab-style"
+version = "0.1.0"
+description = "Shared macros for the example lab"
+tex-dir = "tex"

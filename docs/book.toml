@@ -1,0 +1,9 @@
+[book]
+title = "The quire Book"
+description = "A Cargo-like build tool and package manager for LaTeX"
+language = "en"
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/irfan-khan-96/quire"
+edit-url-template = "https://github.com/irfan-khan-96/quire/edit/main/docs/{path}"

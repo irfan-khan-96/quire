@@ -1,0 +1,99 @@
+name: quire
+description: Build a LaTeX document or pack it for arXiv with quire, and upload the result.
+author: irfan-khan-96
+branding:
+  icon: book-open
+  color: blue
+
+inputs:
+  command:
+    description: "`build` (PDF) or `pack` (arXiv bundle)."
+    default: build
+  args:
+    description: Extra arguments for the command, e.g. `--release` or `--profile draft`.
+    default: ""
+  working-directory:
+    description: Directory containing quire.toml.
+    default: "."
+  version:
+    description: quire release to install (`latest`, a tag like `v0.1.0`, or `source` to build this checkout of the action).
+    default: latest
+  tex:
+    description: "TeX installation on Linux runners: `standard` (common LaTeX packages, biber), `full` (texlive-full, slow), or `none` (already installed)."
+    default: standard
+  locked:
+    description: Pass --locked, so the build fails instead of changing quire.lock.
+    default: "true"
+  upload:
+    description: Upload the PDF or bundle as a workflow artifact.
+    default: "true"
+  artifact-name:
+    description: Name of the uploaded artifact.
+    default: quire-output
+
+outputs:
+  path:
+    description: Glob matching the produced files.
+    value: ${{ steps.run.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install TeX Live
+      if: runner.os == 'Linux' && inputs.tex != 'none'
+      shell: bash
+      run: |
+        case "${{ inputs.tex }}" in
+          full) packages="texlive-full" ;;
+          standard) packages="latexmk texlive-latex-recommended texlive-latex-extra texlive-fonts-recommended texlive-bibtex-extra texlive-science biber lmodern cm-super" ;;
+          *) echo "::error::unknown tex input '${{ inputs.tex }}' (use standard, full or none)"; exit 1 ;;
+        esac
+        sudo apt-get update -q
+        sudo apt-get install -y -q --no-install-recommends $packages
+
+    - name: Install quire from source
+      if: inputs.version == 'source'
+      shell: bash
+      run: cargo install --locked --quiet --path "${{ github.action_path }}" --root "$RUNNER_TEMP/quire"  && echo "$RUNNER_TEMP/quire/bin" >> "$GITHUB_PATH"
+
+    - name: Install quire
+      if: inputs.version != 'source' && runner.os != 'Windows'
+      shell: bash
+      env:
+        QUIRE_VERSION: ${{ inputs.version }}
+        QUIRE_INSTALL_DIR: ${{ runner.temp }}/quire/bin
+      run: sh "${{ github.action_path }}/install.sh" && echo "$QUIRE_INSTALL_DIR" >> "$GITHUB_PATH"
+
+    - name: Install quire (Windows)
+      if: inputs.version != 'source' && runner.os == 'Windows'
+      shell: pwsh
+      env:
+        QUIRE_VERSION: ${{ inputs.version }}
+        QUIRE_INSTALL_DIR: ${{ runner.temp }}\quire\bin
+        QUIRE_NO_MODIFY_PATH: "1"
+      run: |
+        & "${{ github.action_path }}/install.ps1"
+        Add-Content -Path $env:GITHUB_PATH -Value $env:QUIRE_INSTALL_DIR
+
+    - name: Run quire ${{ inputs.command }}
+      id: run
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        case "${{ inputs.command }}" in
+          build) path="target/*/*.pdf" ;;
+          pack) path="target/arxiv/*.zip" ;;
+          *) echo "::error::unknown command '${{ inputs.command }}' (use build or pack)"; exit 1 ;;
+        esac
+        locked=""
+        if [ "${{ inputs.locked }}" = "true" ]; then locked="--locked"; fi
+        quire ${{ inputs.command }} $locked ${{ inputs.args }}
+        echo "path=${{ inputs.working-directory }}/$path" >> "$GITHUB_OUTPUT"
+
+    - name: Upload ${{ inputs.artifact-name }}
+      if: inputs.upload == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ steps.run.outputs.path }}
+        if-no-files-found: error
