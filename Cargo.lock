@@ -492,7 +492,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "quire"
+name = "quire-tex"
 version = "0.1.1"
 dependencies = [
  "anstream",
