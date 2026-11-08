@@ -28,9 +28,9 @@ Choose the engine with `--engine pdflatex|xelatex|lualatex`.
 
 ## An existing document
 
-Run `quire init` in the folder. If it finds a `.tex` file with
-`\documentclass` in the folder or in `src/`, it uses that as the main file
-instead of creating a template:
+Run `quire init` in the folder. If it finds a complete document (a `.tex` file
+with `\documentclass` and `\begin{document}`) in the folder or in `src/`, it
+uses that as the main file instead of creating a template:
 
 ```console
 $ cd old-thesis
@@ -38,6 +38,14 @@ $ quire init
 note: using existing `thesis.tex` as the main file
      Created document `old-thesis`
 ```
+
+When there are several documents, `init` follows arXiv's `00README.json` if
+there is one. Otherwise it skips standalone figures and files the others
+`\input`, prefers names like `main.tex`, `paper.tex` or `ms.tex`, and then
+picks the largest. It lists the other candidates, so you can change `main` in
+`quire.toml` if it guessed wrong. It also picks the engine: xelatex for
+documents that load `fontspec`, `unicode-math` or `polyglossia`, lualatex for
+`luacode`. Pass `--engine` to override this.
 
 ## The manifest
 

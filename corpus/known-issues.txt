@@ -1,0 +1,2 @@
+# Corpus papers that quire is known to fail on, so the nightly run stays green
+# until they are fixed. Format: <arxiv id> <reason or issue link>
