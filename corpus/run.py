@@ -327,7 +327,7 @@ def summarize(results, known):
     if buildable:
         lines.append("")
         lines.append(f"quire handles **{counts.get('ok', 0)} of {buildable}** papers that plain latexmk can build "
-                     f"({100 * counts.get('ok', 0) / buildable:.0f}%).")
+                     f"({100 * counts.get('ok', 0) / buildable:.1f}%).")
     ok = [r for r in results if r["class"] == "ok"]
     if ok:
         first = sorted(r["build_s"] for r in ok)
