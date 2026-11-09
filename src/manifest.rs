@@ -194,6 +194,19 @@ impl RawDependency {
                 Ok(DepSpec::Path { path: PathBuf::from(path) })
             }
             (None, Some(url)) => {
+                // git would read a value that starts with `-` as an option
+                // (`--upload-pack=...` runs a command).
+                let values = [
+                    ("git", Some(url)),
+                    ("tag", d.tag.as_ref()),
+                    ("branch", d.branch.as_ref()),
+                    ("rev", d.rev.as_ref()),
+                ];
+                for (key, value) in values {
+                    if value.is_some_and(|v| v.trim().is_empty() || v.trim_start().starts_with('-')) {
+                        bail!("dependency `{name}`: `{key}` cannot be empty or start with `-`");
+                    }
+                }
                 if refs > 1 {
                     bail!("dependency `{name}`: specify at most one of `tag`, `branch` and `rev`");
                 }
@@ -448,6 +461,8 @@ mod tests {
         assert!(err(&format!("{base}a = {{ git = \"g\", tag = \"t\", rev = \"r\" }}")).contains("at most one"));
         assert!(err(&format!("{base}a = {{ path = \"p\", tag = \"t\" }}")).contains("only apply"));
         assert!(err(&format!("{base}a = {{ paht = \"p\" }}")).contains("unknown key `paht`"));
+        assert!(err(&format!("{base}a = {{ git = \"--upload-pack=touch x\" }}")).contains("start with `-`"));
+        assert!(err(&format!("{base}a = {{ git = \"https://e.com/a\", rev = \"--output=x\" }}")).contains("`rev`"));
         assert!(err("[build]\nshell-escape = true").contains("[document]"));
         assert!(err("[document]\nname = \"x\"\nroot = \"../up\"").contains("document.root"));
         assert!(Manifest::parse("[document]\nname = \"x\"\nroot = \".\"").is_ok());

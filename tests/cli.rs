@@ -62,6 +62,46 @@ fn new_creates_a_valid_project() {
 }
 
 #[test]
+fn clean_only_removes_build_output() {
+    let tmp = TempDir::new().unwrap();
+    ok(&quire(tmp.path(), tmp.path(), &["new", "paper", "--vcs", "none"]));
+    let dir = tmp.path().join("paper");
+    fs::create_dir_all(dir.join("target/dev")).unwrap();
+    fs::create_dir_all(dir.join("keep")).unwrap();
+
+    let absolute = dir.join("keep").to_string_lossy().to_string();
+    for profile in ["../keep", "..", &absolute] {
+        let out = quire(&dir, tmp.path(), &["clean", "--profile", profile]);
+        assert!(!out.status.success(), "`clean --profile {profile}` was accepted");
+    }
+    assert!(dir.join("keep").is_dir() && dir.join("src/main.tex").is_file());
+
+    ok(&quire(&dir, tmp.path(), &["clean", "--profile", "dev"]));
+    assert!(!dir.join("target/dev").exists());
+}
+
+#[test]
+fn git_urls_cannot_pass_options_to_git() {
+    if !has("git") {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    ok(&quire(tmp.path(), tmp.path(), &["new", "paper", "--vcs", "none"]));
+    let dir = tmp.path().join("paper");
+    let out = quire(&dir, tmp.path(), &["add", "x", "--git=--upload-pack=touch pwned"]);
+    assert!(!out.status.success());
+
+    // Also when the URL is written into quire.toml by hand.
+    let manifest = fs::read_to_string(dir.join("quire.toml")).unwrap();
+    let edited = manifest.replace("[dependencies]", "[dependencies]\nx = { git = \"--upload-pack=touch pwned\" }");
+    fs::write(dir.join("quire.toml"), edited).unwrap();
+    let out = quire(&dir, tmp.path(), &["fetch"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("start with `-`"));
+    assert!(!dir.join("pwned").exists(), "git ran a command from the URL");
+}
+
+#[test]
 fn failed_add_leaves_manifest_unchanged() {
     let tmp = TempDir::new().unwrap();
     ok(&quire(tmp.path(), tmp.path(), &["new", "paper", "--vcs", "none"]));
