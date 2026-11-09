@@ -65,7 +65,7 @@ pub fn ensure_db(home: &Path, name: &str, url: &str, offline: bool) -> Result<Db
         fs::remove_dir_all(&tmp).with_context(|| format!("failed to clear `{}`", tmp.display()))?;
     }
     let dest = tmp.to_string_lossy().to_string();
-    if let Err(e) = run_git(None, &["clone", "--bare", "--quiet", url, &dest]) {
+    if let Err(e) = run_git(None, &["clone", "--bare", "--quiet", "--", url, &dest]) {
         let _ = fs::remove_dir_all(&tmp);
         return Err(e.context(format!("failed to clone `{url}`")));
     }
@@ -80,7 +80,16 @@ pub fn fetch(db: &Path, url: &str) -> Result<()> {
     shell::status("Updating", url);
     run_git(
         Some(db),
-        &["fetch", "--quiet", "--force", "--prune", url, "+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"],
+        &[
+            "fetch",
+            "--quiet",
+            "--force",
+            "--prune",
+            "--",
+            url,
+            "+refs/heads/*:refs/heads/*",
+            "+refs/tags/*:refs/tags/*",
+        ],
     )
     .with_context(|| format!("failed to fetch `{url}`"))?;
     Ok(())

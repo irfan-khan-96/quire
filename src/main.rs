@@ -186,7 +186,11 @@ fn run(cli: Cli) -> Result<bool> {
         Command::Clean { profile } => {
             let project = Project::discover()?;
             let dir = match &profile {
-                Some(p) => project.target_dir().join(p),
+                // The name becomes a path, so `..` or an absolute path must not get through.
+                Some(p) => {
+                    manifest::validate_name(p).with_context(|| format!("invalid profile name `{p}`"))?;
+                    project.target_dir().join(p)
+                }
                 None => project.target_dir(),
             };
             if dir.exists() {
